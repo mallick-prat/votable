@@ -6,6 +6,11 @@ import { authClient } from "@/lib/auth/client";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   return (
-    <NeonAuthUIProvider authClient={authClient}>{children}</NeonAuthUIProvider>
+    <NeonAuthUIProvider
+      authClient={authClient}
+      social={{ providers: ["google"] }}
+    >
+      {children}
+    </NeonAuthUIProvider>
   );
 }

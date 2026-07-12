@@ -8,7 +8,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ContactOutcome, OUTCOME_TO_STATUS, Person } from "./types";
+
+type DeniedReason = "not_allowed" | "unverified";
 
 interface ImportResult {
   added: number;
@@ -30,11 +34,19 @@ const StoreContext = createContext<Store | null>(null);
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [people, setPeople] = useState<Person[]>([]);
   const [ready, setReady] = useState(false);
+  const [denied, setDenied] = useState<DeniedReason | null>(null);
+  const pathname = usePathname();
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/people");
+    if (res.status === 403) {
+      const body = (await res.json()) as { error?: string };
+      setDenied(body.error === "unverified" ? "unverified" : "not_allowed");
+      return;
+    }
     if (!res.ok) return; // signed out — page access is gated by the proxy
     const { people } = (await res.json()) as { people: Person[] };
+    setDenied(null);
     setPeople(people);
   }, []);
 
@@ -42,6 +54,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- server data can only arrive after mount
     refresh().finally(() => setReady(true));
   }, [refresh]);
+
+  // Auth pages stay reachable so a denied user can switch accounts.
+  const onAuthPage =
+    pathname.startsWith("/auth") || pathname.startsWith("/account");
 
   // Optimistic mutations: apply locally, send to the server, re-sync on failure.
   const update = useCallback(
@@ -122,6 +138,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     [refresh],
   );
+
+  if (ready && denied && !onAuthPage) {
+    return (
+      <div className="max-w-md mx-auto mt-24 border border-hairline p-8 text-center">
+        <h1 className="text-[24px] font-light">
+          {denied === "unverified"
+            ? "Verify your email"
+            : "Account not authorized"}
+        </h1>
+        <p className="text-ink-muted mt-3">
+          {denied === "unverified"
+            ? "This account's email address is unverified. Sign in with Google, or verify the address from the email we sent."
+            : "This account isn't on the campaign access list. Sign in with an authorized account."}
+        </p>
+        <Link
+          href="/auth/sign-out"
+          className="inline-block mt-6 bg-primary text-white px-4 py-2 hover:bg-primary-hover"
+        >
+          Switch account
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <StoreContext.Provider
