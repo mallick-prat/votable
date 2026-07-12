@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { insertPeople } from "@/lib/db";
 import { parseRosterText, rowToPerson } from "@/lib/roster";
-import { requireSession } from "@/lib/auth/guard";
+import { requireStaff, isDenied } from "@/lib/auth/guard";
 
 export async function POST(request: Request) {
-  const denied = await requireSession();
-  if (denied) return denied;
+  const staff = await requireStaff("admin");
+  if (isDenied(staff)) return staff;
 
   const body = (await request.json()) as { text?: string };
   if (typeof body.text !== "string" || !body.text.trim()) {

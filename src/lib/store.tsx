@@ -10,7 +10,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ContactOutcome, OUTCOME_TO_STATUS, Person } from "./types";
+import { ContactOutcome, OUTCOME_TO_STATUS, Person, Staff } from "./types";
 
 type DeniedReason = "not_allowed" | "unverified";
 
@@ -21,6 +21,7 @@ interface ImportResult {
 }
 
 interface Store {
+  me: Staff | null;
   people: Person[];
   ready: boolean;
   update: (id: string, patch: Partial<Person>) => void;
@@ -32,32 +33,44 @@ interface Store {
 const StoreContext = createContext<Store | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
+  const [me, setMe] = useState<Staff | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [ready, setReady] = useState(false);
   const [denied, setDenied] = useState<DeniedReason | null>(null);
   const pathname = usePathname();
 
+  // Voter links and auth pages don't load staff data at all.
+  const publicPage =
+    pathname.startsWith("/v/") ||
+    pathname.startsWith("/auth") ||
+    pathname.startsWith("/account");
+
   const refresh = useCallback(async () => {
-    const res = await fetch("/api/people");
-    if (res.status === 403) {
-      const body = (await res.json()) as { error?: string };
+    const meRes = await fetch("/api/me");
+    if (meRes.status === 403) {
+      const body = (await meRes.json()) as { error?: string };
       setDenied(body.error === "unverified" ? "unverified" : "not_allowed");
       return;
     }
-    if (!res.ok) return; // signed out — page access is gated by the proxy
-    const { people } = (await res.json()) as { people: Person[] };
+    if (!meRes.ok) return; // signed out — page access is gated by the proxy
+    const { me } = (await meRes.json()) as { me: Staff };
     setDenied(null);
+    setMe(me);
+
+    const res = await fetch("/api/people");
+    if (!res.ok) return;
+    const { people } = (await res.json()) as { people: Person[] };
     setPeople(people);
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- server data can only arrive after mount
+    if (publicPage) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- marks the provider ready; no data load on public pages
+      setReady(true);
+      return;
+    }
     refresh().finally(() => setReady(true));
-  }, [refresh]);
-
-  // Auth pages stay reachable so a denied user can switch accounts.
-  const onAuthPage =
-    pathname.startsWith("/auth") || pathname.startsWith("/account");
+  }, [refresh, publicPage]);
 
   // Optimistic mutations: apply locally, send to the server, re-sync on failure.
   const update = useCallback(
@@ -139,7 +152,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
-  if (ready && denied && !onAuthPage) {
+  if (ready && denied && !publicPage) {
     return (
       <div className="max-w-md mx-auto mt-24 border border-hairline p-8 text-center">
         <h1 className="text-[24px] font-light">
@@ -164,7 +177,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   return (
     <StoreContext.Provider
-      value={{ people, ready, update, recordOutcome, undoOutcome, importRoster }}
+      value={{ me, people, ready, update, recordOutcome, undoOutcome, importRoster }}
     >
       {children}
     </StoreContext.Provider>

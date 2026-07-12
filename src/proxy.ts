@@ -5,7 +5,14 @@ export default auth.middleware({
 });
 
 export const config = {
-  // The whole app handles student PII — everything except the auth pages
-  // and the auth API requires a signed-in session.
-  matcher: ["/", "/people/:path*", "/canvass", "/account/:path*"],
+  // Staff surfaces require a signed-in session. Voter links (/v/…) are
+  // deliberately public — the signed token is the credential.
+  matcher: [
+    "/",
+    "/people/:path*",
+    "/canvass",
+    "/field",
+    "/team",
+    "/account/:path*",
+  ],
 };

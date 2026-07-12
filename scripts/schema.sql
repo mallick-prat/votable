@@ -34,3 +34,16 @@ CREATE TABLE IF NOT EXISTS contact_attempts (
 
 CREATE INDEX IF NOT EXISTS contact_attempts_person_idx
   ON contact_attempts (person_id, occurred_at);
+
+-- Invited campaign staff. A Google session whose email has no row here
+-- gets no access. Captains carry a scope (House/Yard/building name).
+CREATE TABLE IF NOT EXISTS staff (
+  email text PRIMARY KEY,
+  role text NOT NULL CHECK (role IN ('admin', 'captain', 'organizer', 'field')),
+  scope text,
+  display_name text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE people
+  ADD COLUMN IF NOT EXISTS assigned_to text REFERENCES staff(email) ON DELETE SET NULL;

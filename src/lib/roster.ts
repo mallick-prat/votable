@@ -73,6 +73,7 @@ export function rowToPerson(r: ParsedRow): Person {
     jurisdiction: null,
     method: null,
     mailbox: "",
+    assignedTo: null,
     history: [],
   };
 }

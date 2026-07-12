@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
-import { getPeople } from "@/lib/db";
 import { requireStaff, isDenied } from "@/lib/auth/guard";
 
 export async function GET() {
   const staff = await requireStaff();
   if (isDenied(staff)) return staff;
-  const people = await getPeople(staff);
-  return NextResponse.json({ people });
+  return NextResponse.json({ me: staff });
 }

@@ -39,6 +39,33 @@ export interface ContactAttempt {
   at: string; // ISO timestamp
 }
 
+export type Role = "admin" | "captain" | "organizer" | "field";
+
+export interface Staff {
+  email: string;
+  role: Role;
+  /** House/Yard/building a captain is responsible for. */
+  scope: string | null;
+  displayName: string;
+}
+
+export const ROLE_LABEL: Record<Role, string> = {
+  admin: "Admin",
+  captain: "Captain",
+  organizer: "Organizer",
+  field: "Field volunteer",
+};
+
+/** The fields a voter may update about themselves via a voter link. */
+export const VOTER_PATCHABLE = [
+  "jurisdiction",
+  "method",
+  "mailbox",
+  "registrationStatus",
+  "ballotStatus",
+  "planStatus",
+] as const;
+
 export interface Person {
   id: string;
   firstName: string;
@@ -60,6 +87,7 @@ export interface Person {
   jurisdiction: Jurisdiction | null;
   method: VotingMethod | null;
   mailbox: string; // Harvard mailbox number, voter-confirmed
+  assignedTo: string | null; // primary organizer's staff email
   history: ContactAttempt[];
 }
 

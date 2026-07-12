@@ -1,7 +1,8 @@
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
+import QRCode from "qrcode";
 import { useStore } from "@/lib/store";
 import {
   BALLOT_STATUS_LABEL,
@@ -12,15 +13,10 @@ import {
   PlanStatus,
   REGISTRATION_STATUS_LABEL,
   RegistrationStatus,
+  Staff,
 } from "@/lib/types";
-import {
-  checkRegistrationUrl,
-  JURISDICTIONS,
-  MAIL_MODEL_LABEL,
-  registerUrl,
-} from "@/lib/jurisdictions";
-import { ballotMailAddress } from "@/lib/mail";
 import { ContactTag, SectionTitle } from "@/components/ui";
+import { VotePlan } from "@/components/vote-plan";
 
 const OUTCOMES: ContactOutcome[] = [
   "no_answer",
@@ -60,29 +56,86 @@ function Select<T extends string>({
   );
 }
 
+function VoterLink({ personId }: { personId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [qr, setQr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (url) QRCode.toDataURL(url, { width: 220, margin: 1 }).then(setQr);
+  }, [url]);
+
+  if (!url) {
+    return (
+      <button
+        onClick={async () => {
+          const res = await fetch(`/api/people/${personId}/link`, { method: "POST" });
+          if (res.ok) setUrl(((await res.json()) as { url: string }).url);
+        }}
+        className="border border-primary text-primary px-4 py-2 hover:bg-primary hover:text-white"
+      >
+        Create voter link
+      </button>
+    );
+  }
+  return (
+    <div className="border border-hairline p-4 max-w-3xl">
+      <p className="text-ink-muted text-[12px] mb-2">
+        Private self-service link — the student can open it on their own phone.
+        It expires in 14 days.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          readOnly
+          value={url}
+          className="flex-1 min-w-64 bg-surface-1 border-b border-ink px-3 py-2 text-[12px]"
+        />
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(url);
+            setCopied(true);
+          }}
+          className="bg-primary text-white px-4 py-2 hover:bg-primary-hover"
+        >
+          {copied ? "Copied" : "Copy link"}
+        </button>
+      </div>
+      {qr && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={qr} alt="QR code for voter link" className="mt-3 border border-hairline" />
+      )}
+    </div>
+  );
+}
+
 export default function PersonPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { people, ready, update, recordOutcome, undoOutcome } = useStore();
+  const { me, people, ready, update, recordOutcome, undoOutcome } = useStore();
+  const [staffList, setStaffList] = useState<Staff[]>([]);
+  const canAssign = me?.role === "admin" || me?.role === "captain";
+
+  useEffect(() => {
+    if (!canAssign) return;
+    fetch("/api/staff").then(async (r) => {
+      if (r.ok) setStaffList(((await r.json()) as { staff: Staff[] }).staff);
+    });
+  }, [canAssign]);
+
   if (!ready) return null;
 
   const p = people.find((x) => x.id === id);
   if (!p) {
     return (
       <p className="mt-8">
-        Person not found. <Link className="text-primary" href="/people">Back to people</Link>
+        Person not found or outside your assignment.{" "}
+        <Link className="text-primary" href="/people">Back to people</Link>
       </p>
     );
   }
 
-  const jurisdictionCode = p.jurisdiction === "ma" ? "MA" : p.homeState;
-  const info = JURISDICTIONS[jurisdictionCode];
-  const votingByMail = p.method === "mail";
-  const address = ballotMailAddress({
-    fullName: `${p.firstName} ${p.lastName}`,
-    house: p.house,
-    isFirstYear: /first/i.test(p.classYear) || /freshman/i.test(p.classYear),
-    mailbox: p.mailbox,
-  });
+  const organizers = staffList.filter(
+    (s) => s.role === "organizer" || s.role === "captain",
+  );
 
   return (
     <div>
@@ -151,168 +204,45 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
       </div>
       <p className="text-ink-subtle text-[12px] mt-2">
         Registration marked here is voter-confirmed, not an official record —
-        verify through the official lookup below.
+        verify through the official lookup in the vote plan.
       </p>
 
-      <SectionTitle>Vote plan</SectionTitle>
-      <div className="grid md:grid-cols-2 gap-4 max-w-3xl">
-        <label className="block">
-          <span className="text-[12px] text-ink-muted">Where they plan to vote</span>
-          <div className="flex gap-px bg-hairline border border-hairline mt-1">
-            {(
-              [
-                { key: "home", label: `Home state (${p.homeState})` },
-                { key: "ma", label: "Massachusetts" },
-              ] as const
-            ).map((j) => (
-              <button
-                key={j.key}
-                onClick={() => update(p.id, { jurisdiction: j.key })}
-                className={`flex-1 px-3 py-2.5 ${
-                  p.jurisdiction === j.key
-                    ? "bg-ink text-white"
-                    : "bg-canvas text-ink-muted hover:bg-surface-1"
-                }`}
-              >
-                {j.label}
-              </button>
-            ))}
-          </div>
-        </label>
-        <label className="block">
-          <span className="text-[12px] text-ink-muted">Voting method</span>
-          <div className="flex gap-px bg-hairline border border-hairline mt-1">
-            {(
-              [
-                { key: "mail", label: "By mail" },
-                { key: "in_person", label: "In person" },
-              ] as const
-            ).map((m) => (
-              <button
-                key={m.key}
-                onClick={() =>
-                  update(p.id, {
-                    method: m.key,
-                    planStatus: p.planStatus === "none" ? "started" : p.planStatus,
-                  })
-                }
-                className={`flex-1 px-3 py-2.5 ${
-                  p.method === m.key
-                    ? "bg-ink text-white"
-                    : "bg-canvas text-ink-muted hover:bg-surface-1"
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </label>
-      </div>
-
-      {p.jurisdiction && info && (
-        <div className="border border-hairline mt-4 max-w-3xl">
-          <div className="px-4 py-3 bg-surface-1 flex flex-wrap items-baseline justify-between gap-2">
-            <span className="font-semibold">{info.name}</span>
-            <span className="text-ink-muted text-[12px]">
-              {MAIL_MODEL_LABEL[info.mailModel]}
-            </span>
-          </div>
-          <div className="p-4 space-y-3">
-            {info.flags && (
-              <p className="text-[12px] bg-warning/20 px-3 py-2">
-                {info.flags} — verify for this election on the official site.
-              </p>
-            )}
-            <ol className="list-decimal ml-5 space-y-2">
-              {info.mailModel !== "NO_REGISTRATION" && (
-                <li>
-                  Check registration on the{" "}
-                  <a
-                    href={checkRegistrationUrl(jurisdictionCode)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    official lookup
-                  </a>
-                  , then mark the result above.
-                </li>
-              )}
-              {info.mailModel === "NO_REGISTRATION" ? (
-                <li>
-                  North Dakota has no voter registration — confirm ID and
-                  residency requirements on the official state site.
-                </li>
-              ) : (
-                <li>
-                  If not registered:{" "}
-                  <a
-                    href={registerUrl(jurisdictionCode)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    register via vote.gov
-                  </a>{" "}
-                  (routes to the official state process).
-                </li>
-              )}
-              {votingByMail && info.mailModel === "REQUEST" && (
-                <li>Request a mail ballot through the official state process.</li>
-              )}
-              {votingByMail && info.mailModel === "EXCUSE" && (
-                <li>
-                  This state requires an excuse for absentee voting — being away
-                  at college commonly qualifies, but confirm on the official
-                  site before requesting.
-                </li>
-              )}
-              {votingByMail && info.mailModel === "ALL_MAIL" && (
-                <li>
-                  Ballots are mailed automatically — confirm the mailing address
-                  on file is the Harvard address below, not a home address.
-                </li>
-              )}
-              {votingByMail && <li>Confirm the ballot mailing address (below).</li>}
-              {!votingByMail && p.jurisdiction === "home" && (
-                <li>
-                  Voting in person in {p.homeState} means being there during the
-                  voting period — otherwise switch to a mail ballot.
-                </li>
-              )}
-              <li>
-                When each step is done, update the ballot and plan status above.
-              </li>
-            </ol>
-          </div>
-        </div>
-      )}
-
-      {votingByMail && (
-        <div className="mt-4 max-w-3xl">
+      {canAssign && (
+        <>
+          <SectionTitle>Assignment</SectionTitle>
           <label className="block max-w-xs">
-            <span className="text-[12px] text-ink-muted">
-              Harvard mailbox number (voter-confirmed — never a room number)
-            </span>
-            <input
-              value={p.mailbox}
-              onChange={(e) => update(p.id, { mailbox: e.target.value })}
-              placeholder="e.g. 287"
+            <span className="text-[12px] text-ink-muted">Primary organizer</span>
+            <select
+              value={p.assignedTo ?? ""}
+              onChange={(e) => update(p.id, { assignedTo: e.target.value || null })}
               className="block w-full mt-1 bg-surface-1 border-b border-ink px-3 py-2.5 focus:outline-none focus:border-b-2 focus:border-b-primary"
-            />
+            >
+              <option value="">Unassigned</option>
+              {organizers.map((s) => (
+                <option key={s.email} value={s.email}>
+                  {s.displayName || s.email}
+                </option>
+              ))}
+            </select>
           </label>
-          <div className="mt-3 border border-hairline p-4">
-            <div className="text-[12px] text-ink-muted mb-2">Ballot mailing address</div>
-            {address.blocked ? (
-              <p className="text-ink-muted">{address.blocked}</p>
-            ) : (
-              <pre className="font-sans whitespace-pre-wrap">
-                {address.lines.join("\n")}
-              </pre>
-            )}
-          </div>
-        </div>
+        </>
       )}
+
+      <SectionTitle>Voter self-service link</SectionTitle>
+      <VoterLink personId={p.id} />
+
+      <SectionTitle>Vote plan</SectionTitle>
+      <VotePlan
+        person={p}
+        onUpdate={(patch) =>
+          update(p.id, {
+            ...patch,
+            ...(p.planStatus === "none" && (patch.jurisdiction || patch.method)
+              ? { planStatus: "started" as const }
+              : {}),
+          })
+        }
+      />
     </div>
   );
 }

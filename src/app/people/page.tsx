@@ -16,7 +16,7 @@ const FILTERS: { key: Filter; label: string }[] = [
 ];
 
 export default function PeoplePage() {
-  const { people, ready, importRoster } = useStore();
+  const { me, people, ready, importRoster } = useStore();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [importing, setImporting] = useState(false);
@@ -67,15 +67,17 @@ export default function PeoplePage() {
     <div>
       <div className="flex items-baseline justify-between mt-2">
         <h1 className="text-[32px] font-light">People</h1>
-        <button
-          onClick={() => {
-            setImporting((v) => !v);
-            setImportResult(null);
-          }}
-          className="border border-primary text-primary px-4 py-2 hover:bg-primary hover:text-white"
-        >
-          {importing ? "Close import" : "Import roster"}
-        </button>
+        {me?.role === "admin" && (
+          <button
+            onClick={() => {
+              setImporting((v) => !v);
+              setImportResult(null);
+            }}
+            className="border border-primary text-primary px-4 py-2 hover:bg-primary hover:text-white"
+          >
+            {importing ? "Close import" : "Import roster"}
+          </button>
+        )}
       </div>
 
       {importing && (
