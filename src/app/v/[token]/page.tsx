@@ -2,6 +2,8 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import { VotePlan, type PlanPerson } from "@/components/vote-plan";
+import { RegistrationCheck } from "@/components/registration-check";
+import type { RegistrationStatus } from "@/lib/types";
 
 type VoterPerson = PlanPerson & {
   registrationStatus: string;
@@ -105,7 +107,33 @@ export default function VoterPage({
         instructions.
       </p>
 
-      <div className="mt-6">
+      <h2 className="text-[20px] font-normal mt-8 mb-3">Check your registration</h2>
+      <RegistrationCheck
+        jurisdiction={person.jurisdiction === "ma" ? "MA" : person.homeState}
+        status={person.registrationStatus as RegistrationStatus}
+        onResult={async (result) => {
+          const res = await fetch(`/api/voter/${token}/registration-check`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ result }),
+          });
+          if (res.ok) {
+            const map: Record<string, string> = {
+              confirmed: "voter_confirmed",
+              pending: "pending",
+              no_match: "no_match",
+              needs_registration: "needs_registration",
+              manual_help: "manual_help",
+            };
+            setPerson((prev) =>
+              prev ? { ...prev, registrationStatus: map[result] ?? prev.registrationStatus } : prev,
+            );
+          }
+        }}
+      />
+
+      <h2 className="text-[20px] font-normal mt-8 mb-3">Your plan</h2>
+      <div className="mt-2">
         <VotePlan
           person={person}
           onUpdate={(p) =>

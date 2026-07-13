@@ -177,12 +177,12 @@ export async function insertPeople(people: Person[]): Promise<number> {
       INSERT INTO people (
         id, first_name, last_name, email, phone, class_year, house,
         building, room, suite_raw, home_city, home_state, home_zip,
-        unit_id, entryway, population
+        unit_id, entryway, population, jurisdiction
       ) VALUES (
         ${p.id}, ${p.firstName}, ${p.lastName}, ${p.email}, ${p.phone},
         ${p.classYear}, ${p.house}, ${p.building}, ${p.room}, ${p.suiteRaw},
         ${p.homeCity}, ${p.homeState}, ${p.homeZip},
-        ${p.unitId}, ${p.entryway}, ${p.population}
+        ${p.unitId}, ${p.entryway}, ${p.population}, ${p.jurisdiction}
       )
       ON CONFLICT (email) DO NOTHING
       RETURNING id`;
@@ -486,6 +486,38 @@ export async function undoOutcome(staff: Staff, id: string): Promise<boolean> {
   return true;
 }
 
+// ------------------------------------------------------- registration checks
+
+const CHECK_RESULT_TO_STATUS: Record<string, string> = {
+  confirmed: "voter_confirmed",
+  pending: "pending",
+  no_match: "no_match",
+  needs_registration: "needs_registration",
+  application_submitted: "application_submitted",
+  manual_help: "manual_help",
+};
+
+/**
+ * Record the outcome of an official-lookup registration check. Stores only
+ * status, jurisdiction, source, and time — never the lookup inputs.
+ */
+export async function recordRegistrationCheck(
+  personId: string,
+  jurisdiction: string,
+  result: string,
+  source: "voter_confirmed" | "organizer_recorded",
+): Promise<boolean> {
+  const status = CHECK_RESULT_TO_STATUS[result];
+  if (!status) return false;
+  await sql`
+    INSERT INTO registration_checks (person_id, jurisdiction, status, source)
+    VALUES (${personId}, ${jurisdiction}, ${status}, ${source})`;
+  await sql`
+    UPDATE people SET registration_status = ${status}, updated_at = now()
+    WHERE id = ${personId}`;
+  return true;
+}
+
 // ---------------------------------------------------------------- turfs
 
 interface TurfRow {
@@ -752,25 +784,41 @@ export async function deleteDeadline(
 // ---------------------------------------------------------------- field mode
 
 /** Minimal, non-residential person search for tabling. */
-export async function fieldSearch(
-  q: string,
-): Promise<{ id: string; name: string; classYear: string; contactStatus: string }[]> {
+export async function fieldSearch(q: string): Promise<
+  {
+    id: string;
+    name: string;
+    classYear: string;
+    contactStatus: string;
+    homeState: string;
+    jurisdiction: string | null;
+    registrationStatus: string;
+  }[]
+> {
   const needle = `%${q.trim()}%`;
   const rows = (await sql`
-    SELECT id, first_name, last_name, class_year, contact_status FROM people
-    WHERE email ILIKE ${needle}
-       OR (first_name || ' ' || last_name) ILIKE ${needle}
+    SELECT id, first_name, last_name, class_year, contact_status,
+           home_state, jurisdiction, registration_status
+    FROM people
+    WHERE active AND (email ILIKE ${needle}
+       OR (first_name || ' ' || last_name) ILIKE ${needle})
     ORDER BY last_name LIMIT 8`) as {
     id: string;
     first_name: string;
     last_name: string;
     class_year: string;
     contact_status: string;
+    home_state: string;
+    jurisdiction: string | null;
+    registration_status: string;
   }[];
   return rows.map((r) => ({
     id: r.id,
     name: `${r.first_name} ${r.last_name}`,
     classYear: r.class_year,
     contactStatus: r.contact_status,
+    homeState: r.home_state,
+    jurisdiction: r.jurisdiction,
+    registrationStatus: r.registration_status,
   }));
 }

@@ -101,6 +101,17 @@ CREATE TABLE IF NOT EXISTS turfs (
 ALTER TABLE people
   ADD COLUMN IF NOT EXISTS turf_id text REFERENCES turfs(id) ON DELETE SET NULL;
 
+-- Registration checks store ONLY the outcome: status, jurisdiction, source,
+-- and time. Never the lookup query, birth date, or identification numbers.
+CREATE TABLE IF NOT EXISTS registration_checks (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  person_id text NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  jurisdiction text NOT NULL,
+  status text NOT NULL,
+  source text NOT NULL,
+  checked_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- Election deadlines are entered by admins from official sources — the app
 -- never generates dates. Each row records its source and verification time.
 CREATE TABLE IF NOT EXISTS deadlines (

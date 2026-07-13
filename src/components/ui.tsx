@@ -42,9 +42,12 @@ const CONTACT_TONE: Record<ContactStatus, Tone> = {
 const REG_TONE: Record<RegistrationStatus, Tone> = {
   unknown: "neutral",
   voter_confirmed: "good",
+  pending: "info",
+  no_match: "warn",
   needs_registration: "bad",
   application_submitted: "info",
   lookup_required: "warn",
+  manual_help: "bad",
 };
 
 const BALLOT_TONE: Record<BallotStatus, Tone> = {

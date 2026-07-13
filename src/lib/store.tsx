@@ -14,20 +14,57 @@ import { ContactOutcome, OUTCOME_TO_STATUS, Person, Staff } from "./types";
 
 type DeniedReason = "not_allowed" | "unverified";
 
-interface ImportResult {
-  added: number;
-  skipped: number;
-  errors: string[];
-}
-
 interface Store {
   me: Staff | null;
   people: Person[];
   ready: boolean;
+  /** contact outcomes recorded offline, waiting to sync */
+  pendingSync: number;
+  refresh: () => Promise<void>;
   update: (id: string, patch: Partial<Person>) => void;
   recordOutcome: (id: string, outcome: ContactOutcome) => void;
   undoOutcome: (id: string) => void;
-  importRoster: (text: string) => Promise<ImportResult>;
+}
+
+// ------------------------------------------------------------ offline outbox
+// Contact outcomes recorded without a connection queue here (localStorage)
+// and flush when the connection returns. Deliberately outcomes-only: that is
+// the one mutation organizers make standing at a door.
+
+interface OutboxEntry {
+  kind: "outcome" | "undo";
+  personId: string;
+  outcome?: ContactOutcome;
+}
+
+const OUTBOX_KEY = "voteable-outbox-v1";
+
+function readOutbox(): OutboxEntry[] {
+  try {
+    return JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? "[]") as OutboxEntry[];
+  } catch {
+    return [];
+  }
+}
+
+function writeOutbox(entries: OutboxEntry[]) {
+  localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries));
+}
+
+async function sendEntry(e: OutboxEntry): Promise<boolean> {
+  try {
+    const res =
+      e.kind === "outcome"
+        ? await fetch(`/api/people/${e.personId}/outcomes`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ outcome: e.outcome }),
+          })
+        : await fetch(`/api/people/${e.personId}/outcomes`, { method: "DELETE" });
+    return res.ok;
+  } catch {
+    return false; // still offline
+  }
 }
 
 const StoreContext = createContext<Store | null>(null);
@@ -37,6 +74,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [people, setPeople] = useState<Person[]>([]);
   const [ready, setReady] = useState(false);
   const [denied, setDenied] = useState<DeniedReason | null>(null);
+  const [pendingSync, setPendingSync] = useState(0);
   const pathname = usePathname();
 
   // Voter links and auth pages don't load staff data at all.
@@ -63,14 +101,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setPeople(people);
   }, []);
 
+  // Flush queued offline outcomes in order; stop at the first failure.
+  const flushOutbox = useCallback(async () => {
+    let entries = readOutbox();
+    let sent = false;
+    while (entries.length > 0 && (await sendEntry(entries[0]))) {
+      entries = entries.slice(1);
+      writeOutbox(entries);
+      sent = true;
+    }
+    setPendingSync(entries.length);
+    if (sent) await refresh();
+  }, [refresh]);
+
   useEffect(() => {
     if (publicPage) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- marks the provider ready; no data load on public pages
       setReady(true);
       return;
     }
-    refresh().finally(() => setReady(true));
-  }, [refresh, publicPage]);
+     
+    setPendingSync(readOutbox().length);
+    refresh()
+      .then(() => flushOutbox())
+      .finally(() => setReady(true));
+    const onOnline = () => flushOutbox();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [refresh, publicPage, flushOutbox]);
 
   // Optimistic mutations: apply locally, send to the server, re-sync on failure.
   const update = useCallback(
@@ -107,9 +165,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ outcome }),
-      }).then((r) => {
-        if (!r.ok) refresh();
-      });
+      })
+        .then((r) => {
+          if (!r.ok) refresh();
+        })
+        .catch(() => {
+          // Offline: keep the optimistic update and queue for sync.
+          writeOutbox([...readOutbox(), { kind: "outcome", personId: id, outcome }]);
+          setPendingSync(readOutbox().length);
+        });
     },
     [refresh],
   );
@@ -130,24 +194,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           };
         }),
       );
-      fetch(`/api/people/${id}/outcomes`, { method: "DELETE" }).then((r) => {
-        if (!r.ok) refresh();
-      });
-    },
-    [refresh],
-  );
-
-  const importRoster = useCallback(
-    async (text: string): Promise<ImportResult> => {
-      const res = await fetch("/api/people/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!res.ok) return { added: 0, skipped: 0, errors: ["Import failed"] };
-      const result = (await res.json()) as ImportResult;
-      await refresh();
-      return result;
+      fetch(`/api/people/${id}/outcomes`, { method: "DELETE" })
+        .then((r) => {
+          if (!r.ok) refresh();
+        })
+        .catch(() => {
+          const outbox = readOutbox();
+          const last = outbox[outbox.length - 1];
+          // Undoing an outcome that itself is still queued just cancels it.
+          if (last?.kind === "outcome" && last.personId === id) {
+            writeOutbox(outbox.slice(0, -1));
+          } else {
+            writeOutbox([...outbox, { kind: "undo", personId: id }]);
+          }
+          setPendingSync(readOutbox().length);
+        });
     },
     [refresh],
   );
@@ -177,7 +238,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   return (
     <StoreContext.Provider
-      value={{ me, people, ready, update, recordOutcome, undoOutcome, importRoster }}
+      value={{
+        me,
+        people,
+        ready,
+        pendingSync,
+        refresh,
+        update,
+        recordOutcome,
+        undoOutcome,
+      }}
     >
       {children}
     </StoreContext.Provider>

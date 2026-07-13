@@ -44,9 +44,29 @@ export async function PATCH(
     return NextResponse.json({ error: "invalid_link" }, { status: 401 });
   }
   const body = (await request.json()) as Record<string, unknown>;
+  const ALLOWED_VALUES: Record<string, string[] | null> = {
+    jurisdiction: ["home", "ma"],
+    method: ["mail", "in_person"],
+    mailbox: null, // free text
+    registrationStatus: [
+      "unknown", "voter_confirmed", "pending", "no_match",
+      "needs_registration", "application_submitted", "lookup_required", "manual_help",
+    ],
+    ballotStatus: [
+      "not_started", "not_needed", "request_needed", "requested", "received", "returned",
+    ],
+    planStatus: ["none", "started", "complete"],
+  };
   const patch: Record<string, unknown> = {};
   for (const field of VOTER_PATCHABLE) {
-    if (field in body) patch[field] = body[field];
+    if (!(field in body)) continue;
+    const allowed = ALLOWED_VALUES[field];
+    const value = body[field];
+    if (allowed === null) {
+      if (typeof value === "string" && value.length <= 40) patch[field] = value;
+    } else if (typeof value === "string" && allowed?.includes(value)) {
+      patch[field] = value;
+    }
   }
   const ok = await updatePersonAsVoter(personId, patch);
   if (!ok) return NextResponse.json({ error: "Nothing updated" }, { status: 400 });

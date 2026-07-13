@@ -1,50 +1,124 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import QRCode from "qrcode";
+import { useState } from "react";
+import { RegistrationCheck } from "@/components/registration-check";
+import { VoterQr } from "@/components/voter-qr";
+import { RegistrationTag } from "@/components/ui";
+import { JURISDICTIONS } from "@/lib/jurisdictions";
+import type { RegistrationStatus, VotingMethod } from "@/lib/types";
 
 interface Result {
   id: string;
   name: string;
   classYear: string;
   contactStatus: string;
+  homeState: string;
+  jurisdiction: string | null;
+  registrationStatus: string;
 }
 
-function VoterQr({ personId, onDone }: { personId: string; onDone: () => void }) {
-  const [qr, setQr] = useState<string | null>(null);
-  const [url, setUrl] = useState<string | null>(null);
+const AFFILIATIONS = [
+  { value: "college", label: "Harvard College" },
+  { value: "affiliate", label: "Other Harvard affiliate" },
+  { value: "visiting", label: "Visiting student" },
+  { value: "off_campus", label: "Off-campus" },
+] as const;
 
-  useEffect(() => {
-    fetch(`/api/people/${personId}/link`, { method: "POST" }).then(async (r) => {
-      if (!r.ok) return;
-      const { url } = (await r.json()) as { url: string };
-      setUrl(url);
-      setQr(await QRCode.toDataURL(url, { width: 260, margin: 1 }));
-    });
-  }, [personId]);
+const EMPTY_FORM = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  state: "",
+  population: "college",
+};
+
+/** One student's guided flow: registration → method → plan → send. */
+function FieldFlow({ person, onDone }: { person: Result; onDone: () => void }) {
+  const [reg, setReg] = useState(person.registrationStatus as RegistrationStatus);
+  const [method, setMethod] = useState<VotingMethod | null>(null);
+  const [showPlan, setShowPlan] = useState(false);
+  const jurisdiction =
+    person.jurisdiction === "ma" ? "MA" : person.homeState;
+
+  if (showPlan) {
+    return <VoterQr personId={person.id} onDone={onDone} />;
+  }
 
   return (
-    <div className="border border-hairline p-6 text-center max-w-sm">
-      <p className="mb-3">Have the student scan this to open their private voting plan:</p>
-      {qr ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={qr} alt="Voter link QR code" className="mx-auto border border-hairline" />
-      ) : (
-        <p className="text-ink-muted py-16">Generating…</p>
-      )}
-      {url && (
+    <div className="max-w-2xl">
+      <div className="flex flex-wrap items-baseline gap-3">
+        <h2 className="text-[24px] font-light">{person.name}</h2>
+        <span className="text-ink-muted text-[12px]">
+          {person.classYear || "—"} · voting in {jurisdiction || "?"}
+          {jurisdiction && JURISDICTIONS[jurisdiction]
+            ? ` (${JURISDICTIONS[jurisdiction].name})`
+            : ""}
+        </span>
+        <RegistrationTag s={reg} />
+      </div>
+
+      <h3 className="text-[16px] font-semibold mt-5 mb-2">1 · Check registration</h3>
+      <RegistrationCheck
+        jurisdiction={jurisdiction}
+        status={reg}
+        onResult={async (result) => {
+          const res = await fetch("/api/registration-checks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ personId: person.id, result }),
+          });
+          if (res.ok) {
+            const map: Record<string, RegistrationStatus> = {
+              confirmed: "voter_confirmed",
+              pending: "pending",
+              no_match: "no_match",
+              needs_registration: "needs_registration",
+              manual_help: "manual_help",
+            };
+            setReg(map[result] ?? reg);
+          }
+        }}
+      />
+
+      <h3 className="text-[16px] font-semibold mt-5 mb-2">2 · How will they vote?</h3>
+      <div className="flex gap-px bg-hairline border border-hairline max-w-sm">
+        {(
+          [
+            { key: "mail", label: "By mail" },
+            { key: "in_person", label: "In person" },
+          ] as const
+        ).map((m) => (
+          <button
+            key={m.key}
+            onClick={async () => {
+              setMethod(m.key);
+              await fetch(`/api/people/${person.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ method: m.key, planStatus: "started" }),
+              });
+            }}
+            className={`flex-1 px-3 py-3 ${
+              method === m.key ? "bg-ink text-white" : "bg-canvas text-ink-muted"
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      <h3 className="text-[16px] font-semibold mt-5 mb-2">3 · Send their voting plan</h3>
+      <p className="text-ink-muted text-[12px] mb-2">
+        Opens their private plan link as a QR code, with email and text options.
+      </p>
+      <div className="flex gap-2">
         <button
-          onClick={() => navigator.clipboard.writeText(url)}
-          className="mt-3 text-primary text-[12px] hover:underline"
+          onClick={() => setShowPlan(true)}
+          className="bg-primary text-white px-6 py-2.5 hover:bg-primary-hover"
         >
-          Copy link instead
+          Create plan link
         </button>
-      )}
-      <div>
-        <button
-          onClick={onDone}
-          className="mt-4 bg-primary text-white px-6 py-2.5 hover:bg-primary-hover"
-        >
+        <button onClick={onDone} className="px-4 py-2.5 text-ink-muted hover:text-ink">
           Done — next student
         </button>
       </div>
@@ -55,18 +129,18 @@ function VoterQr({ personId, onDone }: { personId: string; onDone: () => void })
 export default function FieldPage() {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Result[] | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [active, setActive] = useState<Result | null>(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ firstName: "", lastName: "", email: "" });
+  const [form, setForm] = useState({ ...EMPTY_FORM });
   const [error, setError] = useState<string | null>(null);
 
   // Reset everything between students so no one's info lingers on the device.
   function reset() {
     setQ("");
     setResults(null);
-    setActiveId(null);
+    setActive(null);
     setCreating(false);
-    setForm({ firstName: "", lastName: "", email: "" });
+    setForm({ ...EMPTY_FORM });
     setError(null);
   }
 
@@ -84,6 +158,15 @@ export default function FieldPage() {
     setResults(((await res.json()) as { results: Result[] }).results);
   }
 
+  async function start(person: Result) {
+    await fetch(`/api/people/${person.id}/outcomes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome: "contacted" }),
+    });
+    setActive(person);
+  }
+
   async function create() {
     setError(null);
     const res = await fetch("/api/field/search", {
@@ -96,20 +179,23 @@ export default function FieldPage() {
       return;
     }
     const { id } = (await res.json()) as { id: string };
-    await fetch(`/api/people/${id}/outcomes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ outcome: "contacted" }),
+    await start({
+      id,
+      name: `${form.firstName} ${form.lastName}`,
+      classYear: "",
+      contactStatus: "contacted",
+      homeState: form.state.toUpperCase(),
+      jurisdiction: form.state.toUpperCase() === "MA" ? "ma" : form.state ? "home" : null,
+      registrationStatus: "unknown",
     });
-    setActiveId(id);
   }
 
-  if (activeId) {
+  if (active) {
     return (
       <div>
         <h1 className="text-[32px] font-light mt-2">Field mode</h1>
         <div className="mt-6">
-          <VoterQr personId={activeId} onDone={reset} />
+          <FieldFlow person={active} onDone={reset} />
         </div>
       </div>
     );
@@ -119,8 +205,8 @@ export default function FieldPage() {
     <div>
       <h1 className="text-[32px] font-light mt-2">Field mode</h1>
       <p className="text-ink-muted mt-1">
-        Find a student by name or email, or add a walk-up. Hand them a QR code
-        to their private voting plan — their information stays on their phone.
+        Find a student by name or Harvard email, or add a walk-up. The flow:
+        check registration, pick a method, send their plan.
       </p>
 
       {!creating && (
@@ -154,17 +240,10 @@ export default function FieldPage() {
                     <span className="text-ink-subtle"> · {r.classYear || "—"}</span>
                   </span>
                   <button
-                    onClick={async () => {
-                      await fetch(`/api/people/${r.id}/outcomes`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ outcome: "contacted" }),
-                      });
-                      setActiveId(r.id);
-                    }}
+                    onClick={() => start(r)}
                     className="border border-primary text-primary px-3 py-1.5 text-[12px] hover:bg-primary hover:text-white"
                   >
-                    Start voter link
+                    Start
                   </button>
                 </li>
               ))}
@@ -185,22 +264,50 @@ export default function FieldPage() {
 
       {creating && (
         <div className="mt-6 max-w-sm space-y-3">
-          {(["firstName", "lastName", "email"] as const).map((f) => (
+          {(
+            [
+              ["firstName", "First name"],
+              ["lastName", "Last name"],
+              ["email", "Email"],
+            ] as const
+          ).map(([f, label]) => (
             <input
               key={f}
               value={form[f]}
               onChange={(e) => setForm({ ...form, [f]: e.target.value })}
-              placeholder={
-                f === "firstName" ? "First name" : f === "lastName" ? "Last name" : "Email"
-              }
+              placeholder={label}
               className="block w-full bg-surface-1 border-b border-ink px-4 py-2.5 focus:outline-none focus:border-b-2 focus:border-b-primary"
             />
           ))}
+          <select
+            value={form.population}
+            onChange={(e) => setForm({ ...form, population: e.target.value })}
+            className="block w-full bg-surface-1 border-b border-ink px-4 py-2.5"
+          >
+            {AFFILIATIONS.map((a) => (
+              <option key={a.value} value={a.value}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={form.state}
+            onChange={(e) => setForm({ ...form, state: e.target.value })}
+            className="block w-full bg-surface-1 border-b border-ink px-4 py-2.5"
+          >
+            <option value="">Where do they plan to vote?</option>
+            {Object.values(JURISDICTIONS).map((j) => (
+              <option key={j.code} value={j.code}>
+                {j.name}
+              </option>
+            ))}
+          </select>
           {error && <p className="text-error text-[12px]">{error}</p>}
           <div className="flex gap-2">
             <button
               onClick={create}
-              className="bg-primary text-white px-6 py-2.5 hover:bg-primary-hover"
+              disabled={!form.email.includes("@") || !form.firstName || !form.lastName}
+              className="bg-primary text-white px-6 py-2.5 hover:bg-primary-hover disabled:bg-surface-2 disabled:text-ink-subtle"
             >
               Create and start
             </button>

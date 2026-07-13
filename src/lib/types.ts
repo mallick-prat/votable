@@ -4,7 +4,9 @@ export type ContactOutcome =
   | "come_back"
   | "wrong_room"
   | "moved"
-  | "opted_out";
+  | "already_completed"
+  | "opted_out"
+  | "needs_help";
 
 export type ContactStatus =
   | "uncontacted"
@@ -17,9 +19,12 @@ export type ContactStatus =
 export type RegistrationStatus =
   | "unknown"
   | "voter_confirmed"
+  | "pending"
+  | "no_match"
   | "needs_registration"
   | "application_submitted"
-  | "lookup_required";
+  | "lookup_required"
+  | "manual_help";
 
 export type BallotStatus =
   | "not_started"
@@ -158,10 +163,13 @@ export const CONTACT_STATUS_LABEL: Record<ContactStatus, string> = {
 
 export const REGISTRATION_STATUS_LABEL: Record<RegistrationStatus, string> = {
   unknown: "Unknown",
-  voter_confirmed: "Confirmed by voter",
+  voter_confirmed: "Confirmed registered",
+  pending: "Registration pending",
+  no_match: "No match found",
   needs_registration: "Registration needed",
   application_submitted: "Application submitted",
   lookup_required: "Official lookup required",
+  manual_help: "Manual help needed",
 };
 
 export const BALLOT_STATUS_LABEL: Record<BallotStatus, string> = {
@@ -185,7 +193,9 @@ export const OUTCOME_LABEL: Record<ContactOutcome, string> = {
   come_back: "Come back later",
   wrong_room: "Wrong room",
   moved: "Moved",
+  already_completed: "Already completed",
   opted_out: "Opted out",
+  needs_help: "Needs help",
 };
 
 /** Outcome → resulting contact status */
@@ -195,5 +205,7 @@ export const OUTCOME_TO_STATUS: Record<ContactOutcome, ContactStatus> = {
   come_back: "follow_up",
   wrong_room: "follow_up",
   moved: "moved",
+  already_completed: "contacted",
   opted_out: "opted_out",
+  needs_help: "follow_up",
 };

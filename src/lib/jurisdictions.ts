@@ -102,3 +102,42 @@ export function checkRegistrationUrl(code: string): string {
     return "https://www.sec.state.ma.us/voterregistrationsearch/";
   return "https://www.nass.org/can-I-vote/voter-registration-status";
 }
+
+/**
+ * Registration-check adapter per jurisdiction. There is no national voter
+ * registration database; every check is either an approved official API
+ * (none in v1), a redirect to the official state lookup, or a
+ * user-performed official lookup that the voter confirms afterward.
+ */
+export interface RegistrationAdapter {
+  jurisdiction: string;
+  method: "OFFICIAL_LOOKUP" | "NO_REGISTRATION" | "MANUAL";
+  /** Official lookup page the voter is sent to. */
+  officialUrl: string;
+  note?: string;
+}
+
+export function getAdapter(code: string): RegistrationAdapter {
+  const info = JURISDICTIONS[code];
+  if (!info) {
+    return {
+      jurisdiction: code,
+      method: "MANUAL",
+      officialUrl: "https://vote.gov",
+      note: "Unknown jurisdiction — contact the local election office.",
+    };
+  }
+  if (info.mailModel === "NO_REGISTRATION") {
+    return {
+      jurisdiction: code,
+      method: "NO_REGISTRATION",
+      officialUrl: "https://vip.sos.nd.gov/PortalList.aspx",
+      note: "North Dakota has no voter registration — check ID and residency requirements instead.",
+    };
+  }
+  return {
+    jurisdiction: code,
+    method: "OFFICIAL_LOOKUP",
+    officialUrl: checkRegistrationUrl(code),
+  };
+}

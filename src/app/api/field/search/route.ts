@@ -24,6 +24,9 @@ export async function PUT(request: Request) {
     firstName?: string;
     lastName?: string;
     email?: string;
+    /** intended voting state, two-letter code (MA routes to the MA path) */
+    state?: string;
+    population?: string;
   };
   if (!body.firstName?.trim() || !body.lastName?.trim() || !body.email?.includes("@")) {
     return NextResponse.json(
@@ -31,6 +34,12 @@ export async function PUT(request: Request) {
       { status: 400 },
     );
   }
+  const state = body.state?.trim().toUpperCase() ?? "";
+  const population = ["college", "off_campus", "visiting", "affiliate"].includes(
+    body.population ?? "",
+  )
+    ? (body.population as "college")
+    : "college";
   const person = rowToPerson({
     year: "",
     firstName: body.firstName.trim(),
@@ -39,9 +48,11 @@ export async function PUT(request: Request) {
     suite: "Field signup",
     phone: "",
     city: "",
-    state: "",
+    state,
     zip: "",
   });
+  person.population = population;
+  person.jurisdiction = state ? (state === "MA" ? "ma" : "home") : null;
   const added = await insertPeople([person]);
   return NextResponse.json({ id: person.id, existed: added === 0 });
 }

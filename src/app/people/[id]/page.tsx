@@ -17,6 +17,7 @@ import {
 } from "@/lib/types";
 import { ContactTag, SectionTitle, Tag } from "@/components/ui";
 import { VotePlan } from "@/components/vote-plan";
+import { RegistrationCheck } from "@/components/registration-check";
 import { AdminDetails } from "@/components/admin-details";
 import { POPULATION_LABEL } from "@/lib/types";
 
@@ -26,7 +27,9 @@ const OUTCOMES: ContactOutcome[] = [
   "come_back",
   "wrong_room",
   "moved",
+  "already_completed",
   "opted_out",
+  "needs_help",
 ];
 
 function Select<T extends string>({
@@ -112,7 +115,7 @@ function VoterLink({ personId }: { personId: string }) {
 
 export default function PersonPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { me, people, ready, update, recordOutcome, undoOutcome } = useStore();
+  const { me, people, ready, update, recordOutcome, undoOutcome, refresh } = useStore();
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const canAssign = me?.role === "admin" || me?.role === "captain";
 
@@ -239,6 +242,20 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
           <AdminDetails person={p} people={people} onUpdate={(patch) => update(p.id, patch)} />
         </>
       )}
+
+      <SectionTitle>Registration check</SectionTitle>
+      <RegistrationCheck
+        jurisdiction={p.jurisdiction === "ma" ? "MA" : p.homeState}
+        status={p.registrationStatus}
+        onResult={async (result) => {
+          const res = await fetch("/api/registration-checks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ personId: p.id, result }),
+          });
+          if (res.ok) refresh();
+        }}
+      />
 
       <SectionTitle>Voter self-service link</SectionTitle>
       <VoterLink personId={p.id} />
