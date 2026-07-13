@@ -87,3 +87,29 @@ CREATE TABLE IF NOT EXISTS staff (
 
 ALTER TABLE people
   ADD COLUMN IF NOT EXISTS assigned_to text REFERENCES staff(email) ON DELETE SET NULL;
+
+-- Turfs: named groups of students with a captain and one primary organizer.
+-- The person remains the atomic assignment (people.assigned_to).
+CREATE TABLE IF NOT EXISTS turfs (
+  id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  name text NOT NULL,
+  captain_email text REFERENCES staff(email) ON DELETE SET NULL,
+  organizer_email text REFERENCES staff(email) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE people
+  ADD COLUMN IF NOT EXISTS turf_id text REFERENCES turfs(id) ON DELETE SET NULL;
+
+-- Election deadlines are entered by admins from official sources — the app
+-- never generates dates. Each row records its source and verification time.
+CREATE TABLE IF NOT EXISTS deadlines (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  jurisdiction text NOT NULL,   -- two-letter state code, or 'US' for national
+  type text NOT NULL CHECK (type IN
+    ('registration', 'ballot_request', 'recommended_mail', 'election_day', 'cure')),
+  date date NOT NULL,
+  source_url text NOT NULL,
+  note text NOT NULL DEFAULT '',
+  verified_at timestamptz NOT NULL DEFAULT now()
+);

@@ -92,7 +92,44 @@ export interface Person {
   entryway: string;
   population: Population;
   active: boolean;
+  turfId: string | null;
   history: ContactAttempt[];
+}
+
+export interface Turf {
+  id: string;
+  name: string;
+  captainEmail: string | null;
+  organizerEmail: string | null;
+  members: number;
+  contacted: number;
+  uncontacted: number;
+  followUps: number;
+}
+
+export type DeadlineType =
+  | "registration"
+  | "ballot_request"
+  | "recommended_mail"
+  | "election_day"
+  | "cure";
+
+export const DEADLINE_TYPE_LABEL: Record<DeadlineType, string> = {
+  registration: "Registration deadline",
+  ballot_request: "Ballot request deadline",
+  recommended_mail: "Recommended mail-by date",
+  election_day: "Election Day",
+  cure: "Ballot cure deadline",
+};
+
+export interface Deadline {
+  id: number;
+  jurisdiction: string; // state code or 'US'
+  type: DeadlineType;
+  date: string; // YYYY-MM-DD
+  sourceUrl: string;
+  note: string;
+  verifiedAt: string;
 }
 
 export type Population =

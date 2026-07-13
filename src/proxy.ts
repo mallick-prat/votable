@@ -14,6 +14,7 @@ export const config = {
     "/field",
     "/team",
     "/import",
+    "/turfs",
     "/account/:path*",
   ],
 };

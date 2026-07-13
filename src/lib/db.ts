@@ -37,6 +37,7 @@ interface PersonRow {
   entryway: string;
   population: string;
   active: boolean;
+  turf_id: string | null;
 }
 
 function rowToPerson(r: PersonRow, history: ContactAttempt[]): Person {
@@ -66,6 +67,7 @@ function rowToPerson(r: PersonRow, history: ContactAttempt[]): Person {
     entryway: r.entryway,
     population: r.population as Person["population"],
     active: r.active,
+    turfId: r.turf_id,
     history,
   };
 }
@@ -202,9 +204,14 @@ export async function getPeople(staff: Staff): Promise<Person[]> {
     rows = (await sql`SELECT * FROM people ORDER BY last_name, first_name`) as PersonRow[];
   } else if (staff.role === "captain") {
     rows = (await sql`
-      SELECT * FROM people
-      WHERE active AND (house = ${staff.scope} OR building = ${staff.scope} OR unit_id = ${staff.scope?.toLowerCase() ?? ""})
-      ORDER BY last_name, first_name`) as PersonRow[];
+      SELECT p.* FROM people p
+      LEFT JOIN turfs t ON p.turf_id = t.id
+      WHERE p.active AND (
+        p.house = ${staff.scope} OR p.building = ${staff.scope}
+        OR p.unit_id = ${staff.scope?.toLowerCase() ?? ""}
+        OR t.captain_email = ${staff.email}
+      )
+      ORDER BY p.last_name, p.first_name`) as PersonRow[];
   } else {
     rows = (await sql`
       SELECT * FROM people WHERE active AND assigned_to = ${staff.email}
@@ -252,8 +259,13 @@ async function requirePersonInScope(
   staff: Staff,
   id: string,
 ): Promise<PersonRow | null> {
-  const rows = (await sql`SELECT * FROM people WHERE id = ${id}`) as PersonRow[];
-  if (rows.length === 0 || !inScope(staff, rows[0])) return null;
+  const rows = (await sql`
+    SELECT p.*, t.captain_email AS turf_captain FROM people p
+    LEFT JOIN turfs t ON p.turf_id = t.id
+    WHERE p.id = ${id}`) as (PersonRow & { turf_captain: string | null })[];
+  if (rows.length === 0) return null;
+  if (staff.role === "captain" && rows[0].turf_captain === staff.email) return rows[0];
+  if (!inScope(staff, rows[0])) return null;
   return rows[0];
 }
 
@@ -363,6 +375,7 @@ const ADMIN_PATCHABLE: Record<string, string> = {
   unitId: "unit_id",
   population: "population",
   active: "active",
+  turfId: "turf_id",
 };
 
 export async function updatePerson(
@@ -471,6 +484,269 @@ export async function undoOutcome(staff: Staff, id: string): Promise<boolean> {
     : "uncontacted";
   await sql`UPDATE people SET contact_status = ${status}, updated_at = now() WHERE id = ${id}`;
   return true;
+}
+
+// ---------------------------------------------------------------- turfs
+
+interface TurfRow {
+  id: string;
+  name: string;
+  captain_email: string | null;
+  organizer_email: string | null;
+  members: number;
+  contacted: number;
+  uncontacted: number;
+  follow_ups: number;
+}
+
+function rowToTurf(r: TurfRow) {
+  return {
+    id: r.id,
+    name: r.name,
+    captainEmail: r.captain_email,
+    organizerEmail: r.organizer_email,
+    members: Number(r.members),
+    contacted: Number(r.contacted),
+    uncontacted: Number(r.uncontacted),
+    followUps: Number(r.follow_ups),
+  };
+}
+
+export async function listTurfs(staff: Staff) {
+  const rows = (await sql`
+    SELECT t.id, t.name, t.captain_email, t.organizer_email,
+      count(p.id) AS members,
+      count(*) FILTER (WHERE p.contact_status = 'contacted') AS contacted,
+      count(*) FILTER (WHERE p.contact_status = 'uncontacted') AS uncontacted,
+      count(*) FILTER (WHERE p.contact_status = 'follow_up') AS follow_ups
+    FROM turfs t
+    LEFT JOIN people p ON p.turf_id = t.id AND p.active
+    GROUP BY t.id ORDER BY t.name`) as TurfRow[];
+  const all = rows.map(rowToTurf);
+  if (staff.role === "admin") return all;
+  if (staff.role === "captain")
+    return all.filter((t) => t.captainEmail === staff.email);
+  return all.filter((t) => t.organizerEmail === staff.email);
+}
+
+/** Residential-proximity order used for turf building and splitting. */
+const PROXIMITY_ORDER = `ORDER BY building, entryway, room, last_name`;
+
+/**
+ * Create turfs from a slice of the residential hierarchy. With targetSize,
+ * students are chunked into turfs of roughly that size in residential order.
+ */
+export async function createTurfs(
+  staff: Staff,
+  opts: {
+    baseName: string;
+    unitId?: string;
+    building?: string;
+    onlyUnassigned: boolean;
+    targetSize?: number;
+    captainEmail?: string | null;
+    organizerEmail?: string | null;
+  },
+): Promise<{ ok: true; created: string[] } | { ok: false; error: string }> {
+  if (staff.role !== "admin") return { ok: false, error: "Admins only" };
+
+  const conditions = ["active", "population != 'affiliate'"];
+  const params: unknown[] = [];
+  if (opts.unitId) {
+    params.push(opts.unitId);
+    conditions.push(`unit_id = $${params.length}`);
+  }
+  if (opts.building) {
+    params.push(opts.building);
+    conditions.push(`building = $${params.length}`);
+  }
+  if (opts.onlyUnassigned) conditions.push("turf_id IS NULL");
+
+  const people = (await sql.query(
+    `SELECT id FROM people WHERE ${conditions.join(" AND ")} ${PROXIMITY_ORDER}`,
+    params,
+  )) as { id: string }[];
+  if (people.length === 0) return { ok: false, error: "No matching students" };
+
+  const size = opts.targetSize && opts.targetSize > 0 ? opts.targetSize : people.length;
+  const chunkCount = Math.ceil(people.length / size);
+  const created: string[] = [];
+
+  for (let i = 0; i < chunkCount; i++) {
+    const name = chunkCount === 1 ? opts.baseName : `${opts.baseName} ${i + 1}`;
+    const [turf] = (await sql`
+      INSERT INTO turfs (name, captain_email, organizer_email)
+      VALUES (${name}, ${opts.captainEmail ?? null}, ${opts.organizerEmail ?? null})
+      RETURNING id`) as { id: string }[];
+    const ids = people.slice(i * size, (i + 1) * size).map((p) => p.id);
+    await sql`
+      UPDATE people SET turf_id = ${turf.id},
+        assigned_to = COALESCE(${opts.organizerEmail ?? null}, assigned_to),
+        updated_at = now()
+      WHERE id = ANY(${ids})`;
+    created.push(turf.id);
+  }
+  return { ok: true, created };
+}
+
+/** Rename or re-staff a turf. A new organizer cascades to all members. */
+export async function updateTurf(
+  staff: Staff,
+  id: string,
+  patch: { name?: string; captainEmail?: string | null; organizerEmail?: string | null },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const rows = (await sql`SELECT * FROM turfs WHERE id = ${id}`) as {
+    captain_email: string | null;
+  }[];
+  if (!rows.length) return { ok: false, error: "Turf not found" };
+  const mayManage =
+    staff.role === "admin" ||
+    (staff.role === "captain" && rows[0].captain_email === staff.email);
+  if (!mayManage) return { ok: false, error: "Not permitted" };
+  if ("captainEmail" in patch && staff.role !== "admin")
+    return { ok: false, error: "Only admins change captains" };
+
+  if (patch.name !== undefined)
+    await sql`UPDATE turfs SET name = ${patch.name} WHERE id = ${id}`;
+  if ("captainEmail" in patch)
+    await sql`UPDATE turfs SET captain_email = ${patch.captainEmail ?? null} WHERE id = ${id}`;
+  if ("organizerEmail" in patch) {
+    await sql`UPDATE turfs SET organizer_email = ${patch.organizerEmail ?? null} WHERE id = ${id}`;
+    // Reassign members; contact history lives on the person and is preserved.
+    await sql`
+      UPDATE people SET assigned_to = ${patch.organizerEmail ?? null}, updated_at = now()
+      WHERE turf_id = ${id}`;
+  }
+  return { ok: true };
+}
+
+/** Split a turf in half along residential order; second half gets a new turf. */
+export async function splitTurf(
+  staff: Staff,
+  id: string,
+): Promise<{ ok: true; newId: string } | { ok: false; error: string }> {
+  if (staff.role !== "admin") return { ok: false, error: "Admins only" };
+  const turf = (await sql`SELECT * FROM turfs WHERE id = ${id}`) as {
+    name: string;
+    captain_email: string | null;
+  }[];
+  if (!turf.length) return { ok: false, error: "Turf not found" };
+
+  const members = (await sql.query(
+    `SELECT id FROM people WHERE turf_id = $1 AND active ${PROXIMITY_ORDER}`,
+    [id],
+  )) as { id: string }[];
+  if (members.length < 2) return { ok: false, error: "Too small to split" };
+
+  const [next] = (await sql`
+    INSERT INTO turfs (name, captain_email)
+    VALUES (${turf[0].name + " (split)"}, ${turf[0].captain_email})
+    RETURNING id`) as { id: string }[];
+  const secondHalf = members.slice(Math.ceil(members.length / 2)).map((m) => m.id);
+  await sql`
+    UPDATE people SET turf_id = ${next.id}, updated_at = now()
+    WHERE id = ANY(${secondHalf})`;
+  return { ok: true, newId: next.id };
+}
+
+/** Merge source turf into target; members adopt the target's organizer. */
+export async function mergeTurfs(
+  staff: Staff,
+  sourceId: string,
+  targetId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (staff.role !== "admin") return { ok: false, error: "Admins only" };
+  if (sourceId === targetId) return { ok: false, error: "Pick two different turfs" };
+  const target = (await sql`SELECT organizer_email FROM turfs WHERE id = ${targetId}`) as {
+    organizer_email: string | null;
+  }[];
+  if (!target.length) return { ok: false, error: "Target turf not found" };
+
+  await sql`
+    UPDATE people SET turf_id = ${targetId},
+      assigned_to = COALESCE(${target[0].organizer_email}, assigned_to),
+      updated_at = now()
+    WHERE turf_id = ${sourceId}`;
+  await sql`DELETE FROM turfs WHERE id = ${sourceId}`;
+  return { ok: true };
+}
+
+/** Dissolve a turf; members keep their organizer and contact history. */
+export async function deleteTurf(
+  staff: Staff,
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (staff.role !== "admin") return { ok: false, error: "Admins only" };
+  await sql`DELETE FROM turfs WHERE id = ${id}`; // people.turf_id → NULL via FK
+  return { ok: true };
+}
+
+/** Organizer workload: assigned people and open follow-ups per organizer. */
+export async function organizerWorkload() {
+  const rows = (await sql`
+    SELECT assigned_to AS email, count(*) AS assigned,
+      count(*) FILTER (WHERE contact_status = 'follow_up') AS follow_ups,
+      count(*) FILTER (WHERE contact_status = 'uncontacted') AS uncontacted
+    FROM people WHERE active AND assigned_to IS NOT NULL
+    GROUP BY assigned_to ORDER BY count(*) DESC`) as {
+    email: string;
+    assigned: number;
+    follow_ups: number;
+    uncontacted: number;
+  }[];
+  return rows.map((r) => ({
+    email: r.email,
+    assigned: Number(r.assigned),
+    followUps: Number(r.follow_ups),
+    uncontacted: Number(r.uncontacted),
+  }));
+}
+
+// ---------------------------------------------------------------- deadlines
+
+interface DeadlineRow {
+  id: number;
+  jurisdiction: string;
+  type: string;
+  date: string;
+  source_url: string;
+  note: string;
+  verified_at: string;
+}
+
+export async function listDeadlines() {
+  const rows = (await sql`SELECT * FROM deadlines ORDER BY date, jurisdiction`) as DeadlineRow[];
+  return rows.map((r) => ({
+    id: r.id,
+    jurisdiction: r.jurisdiction,
+    type: r.type,
+    date: typeof r.date === "string" ? r.date : new Date(r.date).toISOString().slice(0, 10),
+    sourceUrl: r.source_url,
+    note: r.note,
+    verifiedAt: new Date(r.verified_at).toISOString(),
+  }));
+}
+
+export async function addDeadline(
+  staff: Staff,
+  d: { jurisdiction: string; type: string; date: string; sourceUrl: string; note?: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (staff.role !== "admin") return { ok: false, error: "Admins only" };
+  if (!/^https?:\/\//.test(d.sourceUrl))
+    return { ok: false, error: "A source URL from the official site is required" };
+  await sql`
+    INSERT INTO deadlines (jurisdiction, type, date, source_url, note)
+    VALUES (${d.jurisdiction.toUpperCase()}, ${d.type}, ${d.date}, ${d.sourceUrl}, ${d.note ?? ""})`;
+  return { ok: true };
+}
+
+export async function deleteDeadline(
+  staff: Staff,
+  id: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (staff.role !== "admin") return { ok: false, error: "Admins only" };
+  await sql`DELETE FROM deadlines WHERE id = ${id}`;
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------- field mode

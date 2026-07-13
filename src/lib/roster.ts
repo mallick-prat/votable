@@ -129,6 +129,7 @@ export function buildPerson(input: PersonInput): Person {
     entryway: input.entryway?.trim() ?? "",
     population: input.population ?? "college",
     active: true,
+    turfId: null,
     history: [],
   };
 }
