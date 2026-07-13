@@ -9,7 +9,7 @@ import { JURISDICTIONS } from "@/lib/jurisdictions";
 
 /** Organizers see their own assignment list, not campaign totals. */
 function OrganizerDashboard() {
-  const { people } = useStore();
+  const people = useStore().people.filter((p) => p.active);
   const followUps = people.filter((p) => p.contactStatus === "follow_up");
   const uncontacted = people.filter((p) => p.contactStatus === "uncontacted");
 
@@ -61,7 +61,8 @@ function OrganizerDashboard() {
 }
 
 export default function Dashboard() {
-  const { me, people, ready } = useStore();
+  const { me, people: allPeople, ready } = useStore();
+  const people = allPeople.filter((p) => p.active);
   const router = useRouter();
 
   // Field volunteers have exactly one workflow.

@@ -88,8 +88,27 @@ export interface Person {
   method: VotingMethod | null;
   mailbox: string; // Harvard mailbox number, voter-confirmed
   assignedTo: string | null; // primary organizer's staff email
+  unitId: string | null; // House/Yard/Dudley (residential_units)
+  entryway: string;
+  population: Population;
+  active: boolean;
   history: ContactAttempt[];
 }
+
+export type Population =
+  | "college"
+  | "off_campus"
+  | "on_leave"
+  | "visiting"
+  | "affiliate";
+
+export const POPULATION_LABEL: Record<Population, string> = {
+  college: "College resident",
+  off_campus: "Off-campus",
+  on_leave: "On leave",
+  visiting: "Visiting",
+  affiliate: "Affiliate",
+};
 
 export const CONTACT_STATUS_LABEL: Record<ContactStatus, string> = {
   uncontacted: "Uncontacted",

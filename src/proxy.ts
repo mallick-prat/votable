@@ -13,6 +13,7 @@ export const config = {
     "/canvass",
     "/field",
     "/team",
+    "/import",
     "/account/:path*",
   ],
 };

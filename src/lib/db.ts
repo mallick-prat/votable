@@ -33,6 +33,10 @@ interface PersonRow {
   method: string | null;
   mailbox: string;
   assigned_to: string | null;
+  unit_id: string | null;
+  entryway: string;
+  population: string;
+  active: boolean;
 }
 
 function rowToPerson(r: PersonRow, history: ContactAttempt[]): Person {
@@ -58,6 +62,10 @@ function rowToPerson(r: PersonRow, history: ContactAttempt[]): Person {
     method: r.method as Person["method"],
     mailbox: r.mailbox,
     assignedTo: r.assigned_to,
+    unitId: r.unit_id,
+    entryway: r.entryway,
+    population: r.population as Person["population"],
+    active: r.active,
     history,
   };
 }
@@ -166,11 +174,13 @@ export async function insertPeople(people: Person[]): Promise<number> {
     const res = await sql`
       INSERT INTO people (
         id, first_name, last_name, email, phone, class_year, house,
-        building, room, suite_raw, home_city, home_state, home_zip
+        building, room, suite_raw, home_city, home_state, home_zip,
+        unit_id, entryway, population
       ) VALUES (
         ${p.id}, ${p.firstName}, ${p.lastName}, ${p.email}, ${p.phone},
         ${p.classYear}, ${p.house}, ${p.building}, ${p.room}, ${p.suiteRaw},
-        ${p.homeCity}, ${p.homeState}, ${p.homeZip}
+        ${p.homeCity}, ${p.homeState}, ${p.homeZip},
+        ${p.unitId}, ${p.entryway}, ${p.population}
       )
       ON CONFLICT (email) DO NOTHING
       RETURNING id`;
@@ -192,11 +202,12 @@ export async function getPeople(staff: Staff): Promise<Person[]> {
     rows = (await sql`SELECT * FROM people ORDER BY last_name, first_name`) as PersonRow[];
   } else if (staff.role === "captain") {
     rows = (await sql`
-      SELECT * FROM people WHERE house = ${staff.scope} OR building = ${staff.scope}
+      SELECT * FROM people
+      WHERE active AND (house = ${staff.scope} OR building = ${staff.scope} OR unit_id = ${staff.scope?.toLowerCase() ?? ""})
       ORDER BY last_name, first_name`) as PersonRow[];
   } else {
     rows = (await sql`
-      SELECT * FROM people WHERE assigned_to = ${staff.email}
+      SELECT * FROM people WHERE active AND assigned_to = ${staff.email}
       ORDER BY last_name, first_name`) as PersonRow[];
   }
   if (rows.length === 0) return [];
@@ -246,6 +257,84 @@ async function requirePersonInScope(
   return rows[0];
 }
 
+/**
+ * Import upsert: inserts new people; for an existing email, updates
+ * identity/location fields and reactivates. Statuses are never touched.
+ */
+export async function importPeople(
+  people: Person[],
+): Promise<{ added: number; updated: number; unchanged: number }> {
+  let added = 0;
+  let updated = 0;
+  const unchanged = 0;
+  for (const p of people) {
+    const res = (await sql`
+      INSERT INTO people (
+        id, first_name, last_name, email, phone, class_year, house,
+        building, room, suite_raw, home_city, home_state, home_zip,
+        unit_id, entryway, population
+      ) VALUES (
+        ${p.id}, ${p.firstName}, ${p.lastName}, ${p.email}, ${p.phone},
+        ${p.classYear}, ${p.house}, ${p.building}, ${p.room}, ${p.suiteRaw},
+        ${p.homeCity}, ${p.homeState}, ${p.homeZip},
+        ${p.unitId}, ${p.entryway}, ${p.population}
+      )
+      ON CONFLICT (email) DO UPDATE SET
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        class_year = CASE WHEN EXCLUDED.class_year = '' THEN people.class_year ELSE EXCLUDED.class_year END,
+        phone = CASE WHEN EXCLUDED.phone = '' THEN people.phone ELSE EXCLUDED.phone END,
+        home_city = CASE WHEN EXCLUDED.home_city = '' THEN people.home_city ELSE EXCLUDED.home_city END,
+        home_state = CASE WHEN EXCLUDED.home_state = '' THEN people.home_state ELSE EXCLUDED.home_state END,
+        home_zip = CASE WHEN EXCLUDED.home_zip = '' THEN people.home_zip ELSE EXCLUDED.home_zip END,
+        house = EXCLUDED.house,
+        building = EXCLUDED.building,
+        room = EXCLUDED.room,
+        suite_raw = EXCLUDED.suite_raw,
+        unit_id = EXCLUDED.unit_id,
+        entryway = EXCLUDED.entryway,
+        active = true,
+        updated_at = now()
+      RETURNING (xmax = 0) AS inserted`) as { inserted: boolean }[];
+    if (res[0]?.inserted) added++;
+    else updated++;
+  }
+  // "updated" includes rows whose values happened to be identical; callers
+  // that need the distinction compute it in the preview step.
+  return { added, updated, unchanged };
+}
+
+/** Merge duplicate records: history and missing fields move to the target. */
+export async function mergePeople(
+  staff: Staff,
+  sourceId: string,
+  targetId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (staff.role !== "admin") return { ok: false, error: "Admins only" };
+  if (sourceId === targetId)
+    return { ok: false, error: "Cannot merge a person into themselves" };
+  const source = (await sql`SELECT * FROM people WHERE id = ${sourceId}`) as PersonRow[];
+  const target = (await sql`SELECT * FROM people WHERE id = ${targetId}`) as PersonRow[];
+  if (!source.length || !target.length)
+    return { ok: false, error: "Person not found" };
+
+  await sql`UPDATE contact_attempts SET person_id = ${targetId} WHERE person_id = ${sourceId}`;
+  const s = source[0];
+  await sql`
+    UPDATE people SET
+      phone = CASE WHEN phone = '' THEN ${s.phone} ELSE phone END,
+      class_year = CASE WHEN class_year = '' THEN ${s.class_year} ELSE class_year END,
+      home_city = CASE WHEN home_city = '' THEN ${s.home_city} ELSE home_city END,
+      home_state = CASE WHEN home_state = '' THEN ${s.home_state} ELSE home_state END,
+      home_zip = CASE WHEN home_zip = '' THEN ${s.home_zip} ELSE home_zip END,
+      mailbox = CASE WHEN mailbox = '' THEN ${s.mailbox} ELSE mailbox END,
+      assigned_to = COALESCE(assigned_to, ${s.assigned_to}),
+      updated_at = now()
+    WHERE id = ${targetId}`;
+  await sql`DELETE FROM people WHERE id = ${sourceId}`;
+  return { ok: true };
+}
+
 /** Columns a client is allowed to update, keyed by Person field. */
 const PATCHABLE: Record<string, string> = {
   contactStatus: "contact_status",
@@ -255,6 +344,25 @@ const PATCHABLE: Record<string, string> = {
   jurisdiction: "jurisdiction",
   method: "method",
   mailbox: "mailbox",
+};
+
+/** Identity/location fields only admins may edit. */
+const ADMIN_PATCHABLE: Record<string, string> = {
+  firstName: "first_name",
+  lastName: "last_name",
+  classYear: "class_year",
+  phone: "phone",
+  homeCity: "home_city",
+  homeState: "home_state",
+  homeZip: "home_zip",
+  house: "house",
+  building: "building",
+  entryway: "entryway",
+  room: "room",
+  suiteRaw: "suite_raw",
+  unitId: "unit_id",
+  population: "population",
+  active: "active",
 };
 
 export async function updatePerson(
@@ -276,6 +384,15 @@ export async function updatePerson(
   if ("assignedTo" in patch && (staff.role === "admin" || staff.role === "captain")) {
     values.push(patch.assignedTo || null);
     sets.push(`assigned_to = $${values.length}`);
+  }
+  // Identity and residence edits (move, deactivate, regroup) are admin-only.
+  if (staff.role === "admin") {
+    for (const [field, column] of Object.entries(ADMIN_PATCHABLE)) {
+      if (field in patch) {
+        values.push(patch[field]);
+        sets.push(`${column} = $${values.length}`);
+      }
+    }
   }
   if (sets.length === 0) return false;
   values.push(id);

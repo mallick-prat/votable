@@ -41,7 +41,7 @@ export default function CanvassPage() {
   const buildings = useMemo(() => {
     const doors = new Map<string, Door>();
     for (const p of people) {
-      if (p.contactStatus === "opted_out") continue;
+      if (p.contactStatus === "opted_out" || !p.active) continue;
       const key = `${p.building}|${p.room}`;
       if (!doors.has(key))
         doors.set(key, { key, building: p.building, room: p.room, people: [], done: true });

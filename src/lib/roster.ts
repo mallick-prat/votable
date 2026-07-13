@@ -1,5 +1,6 @@
 import { Person } from "./types";
 import { HOUSES } from "./mail";
+import { houseFromUnit, resolveUnit } from "./units";
 
 /**
  * Parse a Harvard suite string into house / building / room.
@@ -51,21 +52,71 @@ export interface ParsedRow {
 }
 
 export function rowToPerson(r: ParsedRow): Person {
-  const { house, building, room } = parseSuite(r.suite);
-  return {
-    id: idFromEmail(r.email),
+  return buildPerson({
     firstName: r.firstName,
     lastName: r.lastName,
-    email: r.email.toLowerCase(),
-    phone: r.phone,
+    email: r.email,
     classYear: r.year,
+    suite: r.suite,
+    phone: r.phone,
+    city: r.city,
+    state: r.state,
+    zip: r.zip,
+  });
+}
+
+export interface PersonInput {
+  firstName: string;
+  lastName: string;
+  email: string;
+  classYear?: string;
+  unit?: string; // House/Yard/Dudley name
+  building?: string;
+  entryway?: string;
+  suite?: string;
+  room?: string;
+  phone?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  population?: Person["population"];
+}
+
+/** Build a full Person from import or manual-add input. */
+export function buildPerson(input: PersonInput): Person {
+  const parsed = parseSuite(input.suite ?? "");
+  const unit =
+    resolveUnit(input.unit) ??
+    (parsed.house ? resolveUnit(parsed.house) : null) ??
+    (input.building ? resolveUnit(input.building) : null);
+  const house = houseFromUnit(unit) ?? parsed.house;
+  // With a known unit and a single-token suite (e.g. unit "Adams",
+  // suite "B-12"), the token is the room, not a building.
+  const suiteIsRoomOnly =
+    !!unit && !!input.suite?.trim() && !input.room && parsed.room === "—";
+  const building =
+    input.building?.trim() ||
+    (suiteIsRoomOnly ? "" : parsed.building !== "Unknown" ? parsed.building : "") ||
+    house ||
+    unit?.name ||
+    "Unknown";
+  const room =
+    input.room?.trim() || (suiteIsRoomOnly ? parsed.building : parsed.room);
+
+  return {
+    id: idFromEmail(input.email),
+    firstName: input.firstName.trim(),
+    lastName: input.lastName.trim(),
+    email: input.email.trim().toLowerCase(),
+    phone: input.phone?.trim() ?? "",
+    classYear: input.classYear?.trim() ?? "",
     house,
     building,
     room,
-    suiteRaw: r.suite,
-    homeCity: r.city,
-    homeState: r.state.toUpperCase(),
-    homeZip: r.zip,
+    suiteRaw: input.suite?.trim() || [building, room].filter((s) => s && s !== "—").join(" "),
+    homeCity: input.city?.trim() ?? "",
+    homeState: input.state?.trim().toUpperCase() ?? "",
+    homeZip: input.zip?.trim() ?? "",
     contactStatus: "uncontacted",
     registrationStatus: "unknown",
     ballotStatus: "not_started",
@@ -74,6 +125,10 @@ export function rowToPerson(r: ParsedRow): Person {
     method: null,
     mailbox: "",
     assignedTo: null,
+    unitId: unit?.id ?? null,
+    entryway: input.entryway?.trim() ?? "",
+    population: input.population ?? "college",
+    active: true,
     history: [],
   };
 }

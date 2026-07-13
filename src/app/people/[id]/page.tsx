@@ -15,8 +15,10 @@ import {
   RegistrationStatus,
   Staff,
 } from "@/lib/types";
-import { ContactTag, SectionTitle } from "@/components/ui";
+import { ContactTag, SectionTitle, Tag } from "@/components/ui";
 import { VotePlan } from "@/components/vote-plan";
+import { AdminDetails } from "@/components/admin-details";
+import { POPULATION_LABEL } from "@/lib/types";
 
 const OUTCOMES: ContactOutcome[] = [
   "no_answer",
@@ -147,10 +149,13 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
           {p.firstName} {p.lastName}
         </h1>
         <ContactTag s={p.contactStatus} />
+        {p.population !== "college" && <Tag>{POPULATION_LABEL[p.population]}</Tag>}
+        {!p.active && <Tag tone="bad">Deactivated</Tag>}
       </div>
       <p className="text-ink-muted mt-1">
-        {p.building} {p.room} · {p.classYear} · {p.email} · {p.phone} · Home:{" "}
-        {p.homeCity}, {p.homeState}
+        {p.building} {p.entryway && `${p.entryway} `}
+        {p.room} · {p.classYear} · {p.email} · {p.phone} · Home: {p.homeCity},{" "}
+        {p.homeState}
       </p>
 
       <SectionTitle>Record an outcome</SectionTitle>
@@ -225,6 +230,13 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
               ))}
             </select>
           </label>
+        </>
+      )}
+
+      {me?.role === "admin" && (
+        <>
+          <SectionTitle>Details</SectionTitle>
+          <AdminDetails person={p} people={people} onUpdate={(patch) => update(p.id, patch)} />
         </>
       )}
 
