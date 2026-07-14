@@ -13,6 +13,7 @@ const LINKS: { href: string; label: string; roles: Role[] }[] = [
   { href: "/turfs", label: "Turfs", roles: ["admin", "captain"] },
   { href: "/field", label: "Field", roles: ["admin", "captain", "organizer", "field"] },
   { href: "/team", label: "Team", roles: ["admin", "captain"] },
+  { href: "/rules", label: "Rules", roles: ["admin"] },
 ];
 
 export function Nav() {

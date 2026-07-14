@@ -173,10 +173,15 @@ export default function Dashboard() {
     ).length,
     ballotRequestsNeeded: notOptedOut.filter((p) => p.ballotStatus === "request_needed")
       .length,
-    ballotsExpected: notOptedOut.filter((p) => p.ballotStatus === "requested").length,
+    ballotsExpected: notOptedOut.filter((p) =>
+      ["requested", "mailed", "carrier_delivered", "notice_received"].includes(p.ballotStatus),
+    ).length,
     plansComplete: people.filter((p) => p.planStatus === "complete").length,
     unresolved: notOptedOut.filter(
-      (p) => p.contactStatus === "follow_up" || p.ballotStatus === "request_needed",
+      (p) =>
+        p.contactStatus === "follow_up" ||
+        p.ballotStatus === "request_needed" ||
+        p.ballotStatus === "missing",
     ).length,
     optedOut: people.filter((p) => p.contactStatus === "opted_out").length,
   };
@@ -528,6 +533,9 @@ export default function Dashboard() {
               ...people
                 .filter((p) => p.contactStatus === "follow_up")
                 .map((p) => ({ p, why: "Follow-up requested" })),
+              ...notOptedOut
+                .filter((p) => p.ballotStatus === "missing")
+                .map((p) => ({ p, why: "Ballot missing" })),
               ...notOptedOut
                 .filter((p) => p.ballotStatus === "request_needed")
                 .map((p) => ({ p, why: "Ballot request needed" })),

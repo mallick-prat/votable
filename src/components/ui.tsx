@@ -45,6 +45,7 @@ const REG_TONE: Record<RegistrationStatus, Tone> = {
   pending: "info",
   no_match: "warn",
   needs_registration: "bad",
+  registration_started: "info",
   application_submitted: "info",
   lookup_required: "warn",
   manual_help: "bad",
@@ -55,7 +56,11 @@ const BALLOT_TONE: Record<BallotStatus, Tone> = {
   not_needed: "neutral",
   request_needed: "bad",
   requested: "info",
-  received: "good",
+  mailed: "info",
+  carrier_delivered: "info",
+  notice_received: "info",
+  picked_up: "good",
+  missing: "bad",
   returned: "good",
 };
 

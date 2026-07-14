@@ -6,8 +6,10 @@ import {
   Person,
   Role,
   Staff,
+  StateRule,
 } from "./types";
 import { seedPeople } from "./roster";
+import { JURISDICTIONS } from "./jurisdictions";
 
 const sql = neon(process.env.DATABASE_URL!);
 
@@ -32,6 +34,7 @@ interface PersonRow {
   jurisdiction: string | null;
   method: string | null;
   mailbox: string;
+  ballot_address: string;
   assigned_to: string | null;
   unit_id: string | null;
   entryway: string;
@@ -62,6 +65,7 @@ function rowToPerson(r: PersonRow, history: ContactAttempt[]): Person {
     jurisdiction: r.jurisdiction as Person["jurisdiction"],
     method: r.method as Person["method"],
     mailbox: r.mailbox,
+    ballotAddress: r.ballot_address,
     assignedTo: r.assigned_to,
     unitId: r.unit_id,
     entryway: r.entryway,
@@ -356,6 +360,7 @@ const PATCHABLE: Record<string, string> = {
   jurisdiction: "jurisdiction",
   method: "method",
   mailbox: "mailbox",
+  ballotAddress: "ballot_address",
 };
 
 /** Identity/location fields only admins may edit. */
@@ -426,6 +431,7 @@ export async function updatePersonAsVoter(
     jurisdiction: "jurisdiction",
     method: "method",
     mailbox: "mailbox",
+    ballotAddress: "ballot_address",
     registrationStatus: "registration_status",
     ballotStatus: "ballot_status",
     planStatus: "plan_status",
@@ -484,6 +490,183 @@ export async function undoOutcome(staff: Staff, id: string): Promise<boolean> {
     : "uncontacted";
   await sql`UPDATE people SET contact_status = ${status}, updated_at = now() WHERE id = ${id}`;
   return true;
+}
+
+// ---------------------------------------------------------------- state rules
+
+interface StateRuleRow {
+  jurisdiction: string;
+  name: string;
+  election_date: string | null;
+  registration_deadline: string | null;
+  online_registration: boolean | null;
+  same_day_registration: boolean | null;
+  mail_request_required: boolean | null;
+  mail_request_deadline: string | null;
+  ballot_return_deadline: string | null;
+  return_deadline_basis: "postmark" | "receipt" | null;
+  witness_required: boolean | null;
+  notary_required: boolean | null;
+  id_required: boolean | null;
+  postage_required: boolean | null;
+  early_voting_start: string | null;
+  early_voting_end: string | null;
+  polling_place_url: string | null;
+  ballot_tracking_url: string | null;
+  sample_ballot_url: string | null;
+  source_url: string | null;
+  reviewed_at: string | null;
+  published: boolean;
+}
+
+const d = (v: unknown): string | null =>
+  v == null ? null : typeof v === "string" ? v : new Date(v as string).toISOString().slice(0, 10);
+
+function rowToRule(r: StateRuleRow): StateRule {
+  return {
+    jurisdiction: r.jurisdiction,
+    name: r.name,
+    electionDate: d(r.election_date),
+    registrationDeadline: d(r.registration_deadline),
+    onlineRegistration: r.online_registration,
+    sameDayRegistration: r.same_day_registration,
+    mailRequestRequired: r.mail_request_required,
+    mailRequestDeadline: d(r.mail_request_deadline),
+    ballotReturnDeadline: d(r.ballot_return_deadline),
+    returnDeadlineBasis: r.return_deadline_basis,
+    witnessRequired: r.witness_required,
+    notaryRequired: r.notary_required,
+    idRequired: r.id_required,
+    postageRequired: r.postage_required,
+    earlyVotingStart: d(r.early_voting_start),
+    earlyVotingEnd: d(r.early_voting_end),
+    pollingPlaceUrl: r.polling_place_url,
+    ballotTrackingUrl: r.ballot_tracking_url,
+    sampleBallotUrl: r.sample_ballot_url,
+    sourceUrl: r.source_url,
+    reviewedAt: r.reviewed_at ? new Date(r.reviewed_at).toISOString() : null,
+    published: r.published,
+  };
+}
+
+/** Witness / notary / ID structural flags from the campaign rule matrix. */
+const MATRIX_WITNESS = new Set(["AL", "AK", "AR", "LA", "MN", "NC", "SC", "WI"]);
+const MATRIX_NOTARY = new Set(["MS", "MO", "OK"]);
+const MATRIX_ID = new Set(["AR", "NC", "GA", "KS", "OH", "TX", "TN", "MN"]);
+
+/** Seed unpublished structural drafts for every jurisdiction once. */
+async function ensureStateRules(): Promise<void> {
+  const [{ count }] = (await sql`SELECT count(*)::int AS count FROM state_rules`) as [
+    { count: number },
+  ];
+  if (count >= Object.keys(JURISDICTIONS).length) return;
+  for (const j of Object.values(JURISDICTIONS)) {
+    const mailRequestRequired =
+      j.mailModel === "ALL_MAIL" ? false : j.mailModel === "TERRITORY" ? null : true;
+    await sql`
+      INSERT INTO state_rules (jurisdiction, name, mail_request_required,
+        witness_required, notary_required, id_required, published)
+      VALUES (${j.code}, ${j.name}, ${mailRequestRequired},
+        ${MATRIX_WITNESS.has(j.code) ? true : null},
+        ${MATRIX_NOTARY.has(j.code) ? true : null},
+        ${MATRIX_ID.has(j.code) ? true : null},
+        false)
+      ON CONFLICT (jurisdiction) DO NOTHING`;
+  }
+}
+
+export async function listStateRules(publishedOnly: boolean): Promise<StateRule[]> {
+  await ensureStateRules();
+  const rows = (publishedOnly
+    ? await sql`SELECT * FROM state_rules WHERE published ORDER BY name`
+    : await sql`SELECT * FROM state_rules ORDER BY name`) as StateRuleRow[];
+  return rows.map(rowToRule);
+}
+
+const RULE_COLUMNS: Record<string, string> = {
+  electionDate: "election_date",
+  registrationDeadline: "registration_deadline",
+  onlineRegistration: "online_registration",
+  sameDayRegistration: "same_day_registration",
+  mailRequestRequired: "mail_request_required",
+  mailRequestDeadline: "mail_request_deadline",
+  ballotReturnDeadline: "ballot_return_deadline",
+  returnDeadlineBasis: "return_deadline_basis",
+  witnessRequired: "witness_required",
+  notaryRequired: "notary_required",
+  idRequired: "id_required",
+  postageRequired: "postage_required",
+  earlyVotingStart: "early_voting_start",
+  earlyVotingEnd: "early_voting_end",
+  pollingPlaceUrl: "polling_place_url",
+  ballotTrackingUrl: "ballot_tracking_url",
+  sampleBallotUrl: "sample_ballot_url",
+  sourceUrl: "source_url",
+};
+
+/**
+ * Save a rule. Publishing requires an official source URL and stamps
+ * reviewed_at — that is the whole "review and publish" flow, deliberately.
+ */
+export async function saveStateRule(
+  staff: Staff,
+  jurisdiction: string,
+  patch: Record<string, unknown>,
+  publish: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (staff.role !== "admin") return { ok: false, error: "Admins only" };
+
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  for (const [field, column] of Object.entries(RULE_COLUMNS)) {
+    if (field in patch) {
+      values.push(patch[field] === "" ? null : patch[field]);
+      sets.push(`${column} = $${values.length}`);
+    }
+  }
+  if (publish) {
+    const sourceUrl = (patch.sourceUrl as string) || null;
+    if (!sourceUrl || !/^https?:\/\//.test(sourceUrl)) {
+      return { ok: false, error: "Publishing requires an official source URL" };
+    }
+    sets.push(`published = true`, `reviewed_at = now()`);
+  } else {
+    sets.push(`published = false`);
+  }
+  values.push(jurisdiction.toUpperCase());
+  await sql.query(
+    `UPDATE state_rules SET ${sets.join(", ")} WHERE jurisdiction = $${values.length}`,
+    values,
+  );
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------- units
+
+export async function listUnits() {
+  const rows = (await sql`
+    SELECT id, name, type, mail_street FROM residential_units ORDER BY type, name`) as {
+    id: string;
+    name: string;
+    type: string;
+    mail_street: string | null;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    type: r.type,
+    mailStreet: r.mail_street,
+  }));
+}
+
+export async function updateUnitMailStreet(
+  staff: Staff,
+  id: string,
+  mailStreet: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (staff.role !== "admin") return { ok: false, error: "Admins only" };
+  await sql`UPDATE residential_units SET mail_street = ${mailStreet || null} WHERE id = ${id}`;
+  return { ok: true };
 }
 
 // ------------------------------------------------------- registration checks

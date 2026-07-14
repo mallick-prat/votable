@@ -3,7 +3,8 @@
 import { use, useCallback, useEffect, useState } from "react";
 import { VotePlan, type PlanPerson } from "@/components/vote-plan";
 import { RegistrationCheck } from "@/components/registration-check";
-import type { RegistrationStatus } from "@/lib/types";
+import { RegistrationPaths } from "@/components/registration-paths";
+import type { Jurisdiction, RegistrationStatus, StateRule } from "@/lib/types";
 
 type VoterPerson = PlanPerson & {
   registrationStatus: string;
@@ -27,19 +28,28 @@ const SELF_REPORT: {
     field: "ballotStatus",
     value: "requested",
     label: "I requested my ballot",
-    done: (p) => ["requested", "received", "returned"].includes(p.ballotStatus),
+    done: (p) =>
+      ["requested", "mailed", "carrier_delivered", "notice_received", "picked_up", "returned"].includes(
+        p.ballotStatus,
+      ),
   },
   {
     field: "ballotStatus",
-    value: "received",
-    label: "My ballot arrived",
-    done: (p) => ["received", "returned"].includes(p.ballotStatus),
+    value: "picked_up",
+    label: "I picked up my ballot",
+    done: (p) => ["picked_up", "returned"].includes(p.ballotStatus),
   },
   {
     field: "ballotStatus",
     value: "returned",
     label: "I returned my ballot",
     done: (p) => p.ballotStatus === "returned",
+  },
+  {
+    field: "ballotStatus",
+    value: "missing",
+    label: "My ballot is missing",
+    done: (p) => p.ballotStatus === "missing",
   },
   {
     field: "planStatus",
@@ -57,6 +67,15 @@ export default function VoterPage({
   const { token } = use(params);
   const [person, setPerson] = useState<VoterPerson | null>(null);
   const [invalid, setInvalid] = useState(false);
+  const [rules, setRules] = useState<Map<string, StateRule>>(new Map());
+
+  useEffect(() => {
+    fetch("/api/rules").then(async (r) => {
+      if (!r.ok) return;
+      const { rules } = (await r.json()) as { rules: StateRule[] };
+      setRules(new Map(rules.map((x) => [x.jurisdiction, x])));
+    });
+  }, []);
 
   useEffect(() => {
     fetch(`/api/voter/${token}`).then(async (r) => {
@@ -106,6 +125,17 @@ export default function VoterPage({
         fact links to the official source — nothing here replaces your state&apos;s
         instructions.
       </p>
+
+      <h2 className="text-[20px] font-normal mt-8 mb-3">Where will you vote?</h2>
+      <RegistrationPaths
+        person={{
+          homeState: person.homeState,
+          jurisdiction: person.jurisdiction as Jurisdiction | null,
+          registrationStatus: person.registrationStatus as RegistrationStatus,
+        }}
+        rules={rules}
+        onUpdate={(p) => patch(p)}
+      />
 
       <h2 className="text-[20px] font-normal mt-8 mb-3">Check your registration</h2>
       <RegistrationCheck

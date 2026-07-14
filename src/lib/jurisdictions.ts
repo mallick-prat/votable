@@ -8,7 +8,12 @@
  * election and must come from the official source the links point to.
  */
 
-export type MailModel = "ALL_MAIL" | "REQUEST" | "EXCUSE" | "NO_REGISTRATION";
+export type MailModel =
+  | "ALL_MAIL"
+  | "REQUEST"
+  | "EXCUSE"
+  | "NO_REGISTRATION"
+  | "TERRITORY";
 
 export interface JurisdictionInfo {
   code: string;
@@ -78,6 +83,11 @@ export const JURISDICTIONS: Record<string, JurisdictionInfo> = Object.fromEntrie
     J("WI", "Wisconsin", "REQUEST", "Witness required; address must be complete"),
     J("WY", "Wyoming", "EXCUSE", "Signed envelope required"),
     J("DC", "Washington, D.C.", "ALL_MAIL"),
+    J("AS", "American Samoa", "TERRITORY", "Citizenship/national status and territorial eligibility need manual review"),
+    J("GU", "Guam", "TERRITORY", "Territorial election workflow — manual review for federal and local eligibility"),
+    J("MP", "Northern Mariana Islands", "TERRITORY", "Territorial election workflow — manual review and local-office contact"),
+    J("PR", "Puerto Rico", "EXCUSE", "Excuse-based absentee; signature verification"),
+    J("VI", "U.S. Virgin Islands", "EXCUSE", "Excuse-based absentee; signed envelope required"),
   ].map((j) => [j.code, j]),
 );
 
@@ -86,12 +96,14 @@ export const MAIL_MODEL_LABEL: Record<MailModel, string> = {
   REQUEST: "Mail ballot by request",
   EXCUSE: "Absentee with excuse",
   NO_REGISTRATION: "No voter registration",
+  TERRITORY: "Territorial rules — manual review",
 };
 
 /** Official gateway for registering / updating registration. */
 export function registerUrl(code: string): string {
   const info = JURISDICTIONS[code];
-  if (!info) return "https://vote.gov";
+  // Territories route through the vote.gov hub — no guessed deep links.
+  if (!info || info.mailModel === "TERRITORY") return "https://vote.gov";
   const slug = info.name.toLowerCase().replace(/[.,]/g, "").replace(/\s+/g, "-");
   return `https://vote.gov/register/${slug}`;
 }
@@ -125,6 +137,14 @@ export function getAdapter(code: string): RegistrationAdapter {
       method: "MANUAL",
       officialUrl: "https://vote.gov",
       note: "Unknown jurisdiction — contact the local election office.",
+    };
+  }
+  if (info.mailModel === "TERRITORY") {
+    return {
+      jurisdiction: code,
+      method: "MANUAL",
+      officialUrl: "https://vote.gov",
+      note: `${info.name} eligibility requires manual review — contact the local election office; the campaign help desk can assist.`,
     };
   }
   if (info.mailModel === "NO_REGISTRATION") {

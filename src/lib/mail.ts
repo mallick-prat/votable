@@ -28,12 +28,16 @@ export interface MailAddress {
  * Ballot mailing address for a student. Requires a voter-confirmed mailbox
  * number — a room number must never be silently substituted.
  */
-export function ballotMailAddress(opts: {
-  fullName: string;
-  house: string | null;
-  isFirstYear: boolean;
-  mailbox: string;
-}): MailAddress {
+export function ballotMailAddress(
+  opts: {
+    fullName: string;
+    house: string | null;
+    isFirstYear: boolean;
+    mailbox: string;
+  },
+  /** House → street map. Defaults to the built-in list, overridable from data. */
+  centers: Record<string, string> = HOUSE_MAIL_CENTERS,
+): MailAddress {
   const { fullName, house, isFirstYear, mailbox } = opts;
   if (!mailbox.trim()) {
     return {
@@ -52,12 +56,12 @@ export function ballotMailAddress(opts: {
       ],
     };
   }
-  if (house && HOUSE_MAIL_CENTERS[house]) {
+  if (house && centers[house]) {
     return {
       lines: [
         fullName,
         `${mailbox.trim()} ${house} House Mail Center`,
-        HOUSE_MAIL_CENTERS[house],
+        centers[house],
         "Cambridge, MA 02138",
       ],
     };

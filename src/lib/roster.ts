@@ -124,6 +124,7 @@ export function buildPerson(input: PersonInput): Person {
     jurisdiction: null,
     method: null,
     mailbox: "",
+    ballotAddress: "",
     assignedTo: null,
     unitId: unit?.id ?? null,
     entryway: input.entryway?.trim() ?? "",

@@ -101,6 +101,43 @@ CREATE TABLE IF NOT EXISTS turfs (
 ALTER TABLE people
   ADD COLUMN IF NOT EXISTS turf_id text REFERENCES turfs(id) ON DELETE SET NULL;
 
+-- Election rules per jurisdiction, edited by admins from official sources.
+-- Structural drafts are seeded in code from the campaign rule matrix and
+-- start unpublished. Voters only ever see published rules.
+-- (Note: keep semicolons out of comments — the apply script splits on them.)
+CREATE TABLE IF NOT EXISTS state_rules (
+  jurisdiction text PRIMARY KEY,
+  name text NOT NULL,
+  election_date date,
+  registration_deadline date,
+  online_registration boolean,
+  same_day_registration boolean,
+  mail_request_required boolean,
+  mail_request_deadline date,
+  ballot_return_deadline date,
+  return_deadline_basis text CHECK (return_deadline_basis IN ('postmark', 'receipt')),
+  witness_required boolean,
+  notary_required boolean,
+  id_required boolean,
+  postage_required boolean,
+  early_voting_start date,
+  early_voting_end date,
+  polling_place_url text,
+  ballot_tracking_url text,
+  sample_ballot_url text,
+  source_url text,
+  reviewed_at timestamptz,
+  published boolean NOT NULL DEFAULT false
+);
+
+-- Harvard mail-center street addresses live in data, not code, so admins
+-- can update them when Harvard changes its mail system.
+ALTER TABLE residential_units
+  ADD COLUMN IF NOT EXISTS mail_street text;
+
+ALTER TABLE people
+  ADD COLUMN IF NOT EXISTS ballot_address text NOT NULL DEFAULT '';
+
 -- Registration checks store ONLY the outcome: status, jurisdiction, source,
 -- and time. Never the lookup query, birth date, or identification numbers.
 CREATE TABLE IF NOT EXISTS registration_checks (

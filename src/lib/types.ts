@@ -22,6 +22,7 @@ export type RegistrationStatus =
   | "pending"
   | "no_match"
   | "needs_registration"
+  | "registration_started"
   | "application_submitted"
   | "lookup_required"
   | "manual_help";
@@ -31,7 +32,11 @@ export type BallotStatus =
   | "not_needed"
   | "request_needed"
   | "requested"
-  | "received"
+  | "mailed"
+  | "carrier_delivered"
+  | "notice_received"
+  | "picked_up"
+  | "missing"
   | "returned";
 
 export type PlanStatus = "none" | "started" | "complete";
@@ -66,6 +71,7 @@ export const VOTER_PATCHABLE = [
   "jurisdiction",
   "method",
   "mailbox",
+  "ballotAddress",
   "registrationStatus",
   "ballotStatus",
   "planStatus",
@@ -92,6 +98,7 @@ export interface Person {
   jurisdiction: Jurisdiction | null;
   method: VotingMethod | null;
   mailbox: string; // Harvard mailbox number, voter-confirmed
+  ballotAddress: string; // confirmed ballot mailing address (multi-line)
   assignedTo: string | null; // primary organizer's staff email
   unitId: string | null; // House/Yard/Dudley (residential_units)
   entryway: string;
@@ -167,6 +174,7 @@ export const REGISTRATION_STATUS_LABEL: Record<RegistrationStatus, string> = {
   pending: "Registration pending",
   no_match: "No match found",
   needs_registration: "Registration needed",
+  registration_started: "Registration started",
   application_submitted: "Application submitted",
   lookup_required: "Official lookup required",
   manual_help: "Manual help needed",
@@ -177,7 +185,11 @@ export const BALLOT_STATUS_LABEL: Record<BallotStatus, string> = {
   not_needed: "Not needed",
   request_needed: "Request needed",
   requested: "Requested",
-  received: "Received",
+  mailed: "Ballot mailed",
+  carrier_delivered: "Carrier delivered",
+  notice_received: "Harvard notice received",
+  picked_up: "Picked up",
+  missing: "Ballot missing",
   returned: "Returned",
 };
 
@@ -209,3 +221,34 @@ export const OUTCOME_TO_STATUS: Record<ContactOutcome, ContactStatus> = {
   opted_out: "opted_out",
   needs_help: "follow_up",
 };
+
+/**
+ * Editable election rules for one jurisdiction. Dates and booleans are null
+ * until an admin enters them from the official source; only published rules
+ * are shown to voters. Structural drafts are seeded from the campaign
+ * rule matrix and start unpublished.
+ */
+export interface StateRule {
+  jurisdiction: string;
+  name: string;
+  electionDate: string | null;
+  registrationDeadline: string | null;
+  onlineRegistration: boolean | null;
+  sameDayRegistration: boolean | null;
+  mailRequestRequired: boolean | null;
+  mailRequestDeadline: string | null;
+  ballotReturnDeadline: string | null;
+  returnDeadlineBasis: "postmark" | "receipt" | null;
+  witnessRequired: boolean | null;
+  notaryRequired: boolean | null;
+  idRequired: boolean | null;
+  postageRequired: boolean | null;
+  earlyVotingStart: string | null;
+  earlyVotingEnd: string | null;
+  pollingPlaceUrl: string | null;
+  ballotTrackingUrl: string | null;
+  sampleBallotUrl: string | null;
+  sourceUrl: string | null;
+  reviewedAt: string | null;
+  published: boolean;
+}

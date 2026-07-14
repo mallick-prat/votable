@@ -14,6 +14,7 @@ function voterView(p: Person) {
     jurisdiction: p.jurisdiction,
     method: p.method,
     mailbox: p.mailbox,
+    ballotAddress: p.ballotAddress,
     registrationStatus: p.registrationStatus,
     ballotStatus: p.ballotStatus,
     planStatus: p.planStatus,
@@ -48,12 +49,14 @@ export async function PATCH(
     jurisdiction: ["home", "ma"],
     method: ["mail", "in_person"],
     mailbox: null, // free text
+    ballotAddress: null,
     registrationStatus: [
-      "unknown", "voter_confirmed", "pending", "no_match",
-      "needs_registration", "application_submitted", "lookup_required", "manual_help",
+      "unknown", "voter_confirmed", "pending", "no_match", "needs_registration",
+      "registration_started", "application_submitted", "lookup_required", "manual_help",
     ],
     ballotStatus: [
-      "not_started", "not_needed", "request_needed", "requested", "received", "returned",
+      "not_started", "not_needed", "request_needed", "requested", "mailed",
+      "carrier_delivered", "notice_received", "picked_up", "missing", "returned",
     ],
     planStatus: ["none", "started", "complete"],
   };
@@ -63,7 +66,8 @@ export async function PATCH(
     const allowed = ALLOWED_VALUES[field];
     const value = body[field];
     if (allowed === null) {
-      if (typeof value === "string" && value.length <= 40) patch[field] = value;
+      const cap = field === "ballotAddress" ? 300 : 40;
+      if (typeof value === "string" && value.length <= cap) patch[field] = value;
     } else if (typeof value === "string" && allowed?.includes(value)) {
       patch[field] = value;
     }
